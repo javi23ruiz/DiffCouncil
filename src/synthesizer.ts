@@ -4,6 +4,8 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 
 import type { DiffSummary } from "./context.js";
+import { renderUntrusted } from "./prompt-safety.js";
+import { buildSubmitReviewTool } from "./review-tool.js";
 import type { SpecialistResult } from "./reviewers/base.js";
 import {
   ReviewResponseSchema,
@@ -28,69 +30,13 @@ const SECURITY_DROP_THRESHOLD = 0.4;
 const SYSTEM_PROMPT_PATH = join(__dirname, "..", "prompts", "synthesizer.md");
 
 /**
- * JSON schema for the `submit_review` tool input. Mirrors ReviewResponseSchema
- * in schema.ts, kept by hand so the shape the model sees stays readable. This
- * intentionally duplicates the specialists' tool schema rather than importing
- * it, so the synthesizer and specialists stay decoupled.
+ * The `submit_review` tool the synthesizer is forced to call. Its input schema
+ * is generated from `ReviewResponseSchema` (see review-tool.ts), the same source
+ * of truth the specialists use, so the two can never drift apart.
  */
-const SUBMIT_REVIEW_TOOL: Anthropic.Tool = {
-  name: "submit_review",
-  description:
-    "Submit the synthesized code review. Call this exactly once.",
-  input_schema: {
-    type: "object",
-    properties: {
-      summary: {
-        type: "string",
-        maxLength: 200,
-        description: "One sentence covering the whole review.",
-      },
-      findings: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            file: {
-              type: "string",
-              description: "File path exactly as given in the input findings.",
-            },
-            lineStart: { type: "integer" },
-            lineEnd: { type: "integer" },
-            severity: {
-              type: "string",
-              enum: ["critical", "high", "medium", "low"],
-            },
-            category: {
-              type: "string",
-              enum: ["security", "correctness", "maintainability"],
-            },
-            confidence: {
-              type: "number",
-              minimum: 0,
-              maximum: 1,
-            },
-            description: { type: "string", maxLength: 300 },
-            suggestedFix: { type: "string", maxLength: 300 },
-          },
-          required: [
-            "file",
-            "lineStart",
-            "lineEnd",
-            "severity",
-            "category",
-            "confidence",
-            "description",
-          ],
-        },
-      },
-      verdict: {
-        type: "string",
-        enum: ["looks_good", "comments_to_address", "blocking_issues"],
-      },
-    },
-    required: ["summary", "findings", "verdict"],
-  },
-};
+const SUBMIT_REVIEW_TOOL = buildSubmitReviewTool(
+  "Submit the synthesized code review. Call this exactly once."
+);
 
 export interface SynthesizeInput {
   specialistResults: SpecialistResult[];
@@ -154,6 +100,11 @@ async function loadSystemPrompt(): Promise<string> {
  * Builds the synthesizer user message: the specialists' findings and the diff
  * summary as JSON. The raw diff is deliberately excluded — the synthesizer
  * reasons over structured claims, not code.
+ *
+ * These findings are model output derived from an attacker-controlled diff, so
+ * a compromised or manipulated specialist response could carry injected text.
+ * The payload is therefore wrapped as untrusted input (see prompt-safety.ts) so
+ * the injection defense holds across pipeline stages, not just at the first hop.
  */
 function buildUserMessage(
   rawFindings: readonly Finding[],
@@ -164,13 +115,9 @@ function buildUserMessage(
     null,
     2
   );
-  return [
-    "Here are the specialist findings and the diff summary.",
-    "",
-    "```json",
-    payload,
-    "```",
-  ].join("\n");
+  return renderUntrusted([
+    { label: "specialist_findings_json", content: payload },
+  ]);
 }
 
 /**

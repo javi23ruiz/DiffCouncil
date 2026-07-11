@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ZodError } from "zod";
 
+import { renderUntrusted } from "../prompt-safety.js";
+import { buildSubmitReviewTool } from "../review-tool.js";
 import { ReviewResponseSchema, type ReviewResponse } from "../schema.js";
 
 const MAX_TOKENS = 4096;
@@ -51,77 +53,13 @@ export interface SpecialistResult {
 }
 
 /**
- * JSON schema for the `submit_review` tool input. Written out explicitly to
- * mirror `ReviewResponseSchema` in schema.ts — kept in sync by hand rather than
- * auto-generated so the shape the model sees stays readable and reviewable.
+ * The `submit_review` tool the specialist is forced to call. Its input schema is
+ * generated from `ReviewResponseSchema` (see review-tool.ts) so it cannot drift
+ * from what we validate against, or from the synthesizer's copy.
  */
-const SUBMIT_REVIEW_TOOL: Anthropic.Tool = {
-  name: "submit_review",
-  description:
-    "Submit the structured result of your code review. Call this exactly once.",
-  input_schema: {
-    type: "object",
-    properties: {
-      summary: {
-        type: "string",
-        maxLength: 200,
-        description: "One sentence: what this PR does and your overall take.",
-      },
-      findings: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            file: {
-              type: "string",
-              description: "File path exactly as it appears in the diff.",
-            },
-            lineStart: {
-              type: "integer",
-              description:
-                "First line of the finding, from the diff's new-file line numbers.",
-            },
-            lineEnd: {
-              type: "integer",
-              description: "Last line of the finding, same numbering.",
-            },
-            severity: {
-              type: "string",
-              enum: ["critical", "high", "medium", "low"],
-            },
-            category: {
-              type: "string",
-              enum: ["security", "correctness", "maintainability"],
-            },
-            confidence: {
-              type: "number",
-              minimum: 0,
-              maximum: 1,
-              description:
-                "Your genuine certainty this is a real issue, 0 to 1.",
-            },
-            description: { type: "string", maxLength: 300 },
-            suggestedFix: { type: "string", maxLength: 300 },
-          },
-          required: [
-            "file",
-            "lineStart",
-            "lineEnd",
-            "severity",
-            "category",
-            "confidence",
-            "description",
-          ],
-        },
-      },
-      verdict: {
-        type: "string",
-        enum: ["looks_good", "comments_to_address", "blocking_issues"],
-      },
-    },
-    required: ["summary", "findings", "verdict"],
-  },
-};
+const SUBMIT_REVIEW_TOOL = buildSubmitReviewTool(
+  "Submit the structured result of your code review. Call this exactly once."
+);
 
 /**
  * Loads a specialist's system prompt from disk.
@@ -147,22 +85,19 @@ async function loadSystemPrompt(path: string): Promise<string> {
 }
 
 /**
- * Builds the user message sent to Claude: PR metadata (repo, title, body)
- * followed by the diff under a "## Diff" heading. A missing PR body is rendered
- * as "(no description)".
+ * Builds the user message sent to Claude. The PR metadata and diff are all
+ * attacker-controlled, so they are wrapped as untrusted input (see
+ * prompt-safety.ts) to blunt prompt-injection attempts hidden in a PR title,
+ * body, or diff. A missing PR body is rendered as "(no description)".
  */
 function buildUserMessage(input: SpecialistInput): string {
   const body = input.prBody.trim() === "" ? "(no description)" : input.prBody;
-  return [
-    `Repository: ${input.repo}`,
-    `PR title: ${input.prTitle}`,
-    `PR description:`,
-    body,
-    ``,
-    `## Diff`,
-    ``,
-    input.diff,
-  ].join("\n");
+  return renderUntrusted([
+    { label: "repository", content: input.repo },
+    { label: "pr_title", content: input.prTitle },
+    { label: "pr_description", content: body },
+    { label: "diff", content: input.diff },
+  ]);
 }
 
 /**
