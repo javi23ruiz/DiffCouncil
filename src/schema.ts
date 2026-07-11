@@ -6,10 +6,12 @@ export const FindingSchema = z.object({
   lineStart: z
     .number()
     .int()
+    .positive()
     .describe("first line of the finding, from the diff's new-file line numbers"),
   lineEnd: z
     .number()
     .int()
+    .positive()
     .describe("last line of the finding, same numbering"),
   severity: z.enum(["critical", "high", "medium", "low"]),
   category: z.enum(["security", "correctness", "maintainability"]),

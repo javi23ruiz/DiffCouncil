@@ -7,6 +7,7 @@ import { z } from "zod";
 import { summarizeDiff, truncateDiff } from "./context.js";
 import { formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
+import { log } from "./log.js";
 import { runAllSpecialists, SPECIALIST_IDS } from "./orchestrator.js";
 import { renderReview } from "./render.js";
 import { synthesize } from "./synthesizer.js";
@@ -21,11 +22,6 @@ const PullRequestEventSchema = z.object({
   }),
   pull_request: z.object({ number: z.number() }),
 });
-
-/** Emits one structured JSON log line, prefixed with "sentinel: ". */
-function log(entry: Record<string, unknown>): void {
-  console.log(`sentinel: ${JSON.stringify(entry)}`);
-}
 
 async function main(): Promise<void> {
   const start = Date.now();
@@ -112,7 +108,18 @@ async function main(): Promise<void> {
       latencyMs: synthesis.latencyMs,
       mergedCount: synthesis.mergedCount,
       droppedCount: synthesis.droppedCount,
+      addedCount: synthesis.addedCount,
     });
+    if (synthesis.addedCount > 0) {
+      // The synthesizer emitted more findings than survived the confidence
+      // filter, so it invented some. Its prompt forbids this; surface it loudly
+      // rather than letting it pass as a normal run.
+      log({
+        stage: "synthesize_anomaly",
+        reason: "synthesizer emitted findings not present in the specialist input",
+        addedCount: synthesis.addedCount,
+      });
+    }
 
     const totalUsage = [...results, synthesis].reduce(
       (acc, part) => ({

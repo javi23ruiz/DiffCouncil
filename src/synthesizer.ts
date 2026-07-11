@@ -1,9 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import Anthropic from "@anthropic-ai/sdk";
 
 import type { DiffSummary } from "./context.js";
+import { loadPrompt } from "./prompt-loader.js";
 import { renderUntrusted } from "./prompt-safety.js";
 import { buildSubmitReviewTool } from "./review-tool.js";
 import type { SpecialistResult } from "./reviewers/base.js";
@@ -53,6 +53,13 @@ export interface SynthesizeResult {
   mergedCount: number;
   /** How many raw findings were dropped for low confidence. */
   droppedCount: number;
+  /**
+   * How many findings the synthesizer emitted beyond what survived the
+   * confidence filter - i.e. findings it appears to have invented, which its
+   * prompt forbids. Normally 0; a positive value is an anomaly callers should
+   * surface rather than hide.
+   */
+  addedCount: number;
 }
 
 /** True when a raw finding falls below its category's confidence threshold. */
@@ -63,37 +70,24 @@ function isDropped(finding: Finding): boolean {
 }
 
 /**
- * Derives merged/dropped counts deterministically from the raw inputs and the
+ * Derives merge/drop/add counts deterministically from the raw inputs and the
  * synthesized output, rather than trusting the model to self-report them.
- * `droppedCount` is how many raw findings fell below their threshold;
- * `mergedCount` is the remaining reduction (surviving raw findings collapsed
- * into fewer output findings).
+ * `droppedCount` is how many raw findings fell below their threshold.
+ * `mergedCount` is the net reduction among survivors (collapsed into fewer
+ * output findings). `addedCount` is the opposite case: the model emitted MORE
+ * findings than survived, which means it invented some - an anomaly its prompt
+ * forbids, so we report it as its own count instead of clamping `mergedCount`
+ * to 0 and hiding it. At most one of `mergedCount`/`addedCount` is non-zero.
  */
 function deriveStats(
   rawFindings: readonly Finding[],
   outputCount: number
-): { mergedCount: number; droppedCount: number } {
+): { mergedCount: number; droppedCount: number; addedCount: number } {
   const droppedCount = rawFindings.filter(isDropped).length;
   const survivingCount = rawFindings.length - droppedCount;
   const mergedCount = Math.max(0, survivingCount - outputCount);
-  return { mergedCount, droppedCount };
-}
-
-async function loadSystemPrompt(): Promise<string> {
-  try {
-    return await readFile(SYSTEM_PROMPT_PATH, "utf8");
-  } catch (error: unknown) {
-    if (
-      error instanceof Error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      throw new Error(
-        `Synthesizer system prompt not found at ${SYSTEM_PROMPT_PATH}. ` +
-          `Expected a prompts/synthesizer.md file at the repository root.`
-      );
-    }
-    throw error;
-  }
+  const addedCount = Math.max(0, outputCount - survivingCount);
+  return { mergedCount, droppedCount, addedCount };
 }
 
 /**
@@ -160,7 +154,7 @@ export async function synthesize(
     (r) => r.response.findings
   );
 
-  const systemPrompt = await loadSystemPrompt();
+  const systemPrompt = await loadPrompt(SYSTEM_PROMPT_PATH);
   const userMessage = buildUserMessage(rawFindings, input.diffSummary);
 
   const client = new Anthropic({ apiKey: input.apiKey });

@@ -79,6 +79,34 @@ describe("renderReview", () => {
     );
   });
 
+  it("percent-encodes a model-controlled file path so it cannot break out of the link URL", () => {
+    const out = renderReview(
+      review({
+        findings: [finding({ file: "src/a).ts", lineStart: 3, lineEnd: 3 })],
+      }),
+      ctx,
+      stats
+    );
+    // The `)` is encoded in the URL, so the Markdown `(...)` link stays intact.
+    expect(out).toContain(
+      "https://github.com/javi23ruiz/DiffCouncil/blob/abc123/src/a%29.ts#L3"
+    );
+    expect(out).not.toContain("src/a).ts#L3");
+    // Slashes are preserved as path separators, not encoded.
+    expect(out).not.toContain("src%2Fa");
+  });
+
+  it("strips backticks from the link label so the inline code span cannot be broken out of", () => {
+    const out = renderReview(
+      review({ findings: [finding({ file: "a`b.ts", lineStart: 1, lineEnd: 1 })] }),
+      ctx,
+      stats
+    );
+    // Label is inside a `code span`; a raw backtick would end it early.
+    expect(out).toContain("[`ab.ts:1`]");
+    expect(out).not.toContain("[`a`b.ts");
+  });
+
   it("renders the synthesis stats footer", () => {
     const out = renderReview(review({ findings: [finding()] }), ctx, stats);
     expect(out).toContain(

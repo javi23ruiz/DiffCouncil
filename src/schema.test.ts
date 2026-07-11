@@ -37,6 +37,21 @@ describe("FindingSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a non-positive lineStart", () => {
+    expect(
+      FindingSchema.safeParse({ ...validFinding, lineStart: 0 }).success
+    ).toBe(false);
+    expect(
+      FindingSchema.safeParse({ ...validFinding, lineStart: -5 }).success
+    ).toBe(false);
+  });
+
+  it("rejects a non-positive lineEnd", () => {
+    expect(
+      FindingSchema.safeParse({ ...validFinding, lineEnd: 0 }).success
+    ).toBe(false);
+  });
+
   it("accepts a 600-char description but rejects 601", () => {
     expect(
       FindingSchema.safeParse({ ...validFinding, description: "x".repeat(600) })

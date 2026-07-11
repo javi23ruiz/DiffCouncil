@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import type { ZodError } from "zod";
 
+import { log } from "./log.js";
 import {
   runSpecialist,
   SpecialistValidationError,
@@ -106,11 +107,6 @@ export interface OrchestratorInput {
   repo: string;
   model: string;
   apiKey: string;
-}
-
-/** Emits one structured JSON log line, prefixed with "sentinel: ". */
-function log(entry: Record<string, unknown>): void {
-  console.log(`sentinel: ${JSON.stringify(entry)}`);
 }
 
 /**

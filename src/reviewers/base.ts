@@ -1,8 +1,7 @@
-import { readFile } from "node:fs/promises";
-
 import Anthropic from "@anthropic-ai/sdk";
 import type { ZodError } from "zod";
 
+import { loadPrompt } from "../prompt-loader.js";
 import { renderUntrusted } from "../prompt-safety.js";
 import { buildSubmitReviewTool } from "../review-tool.js";
 import { ReviewResponseSchema, type ReviewResponse } from "../schema.js";
@@ -60,29 +59,6 @@ export interface SpecialistResult {
 const SUBMIT_REVIEW_TOOL = buildSubmitReviewTool(
   "Submit the structured result of your code review. Call this exactly once."
 );
-
-/**
- * Loads a specialist's system prompt from disk.
- *
- * @throws If the prompt file does not exist, with a message pointing at the
- * expected path.
- */
-async function loadSystemPrompt(path: string): Promise<string> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error: unknown) {
-    if (
-      error instanceof Error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      throw new Error(
-        `Specialist system prompt not found at ${path}. ` +
-          `Expected a prompt file under the prompts/ directory.`
-      );
-    }
-    throw error;
-  }
-}
 
 /**
  * Builds the user message sent to Claude. The PR metadata and diff are all
@@ -145,7 +121,7 @@ export async function runSpecialist(
     return mockResult(input.specialistId);
   }
 
-  const systemPrompt = await loadSystemPrompt(input.systemPromptPath);
+  const systemPrompt = await loadPrompt(input.systemPromptPath);
   const userMessage = buildUserMessage(input);
 
   const client = new Anthropic({ apiKey: input.apiKey });

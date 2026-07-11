@@ -128,6 +128,29 @@ describe("synthesize", () => {
     expect(result.droppedCount).toBe(1);
   });
 
+  it("surfaces invented findings as addedCount instead of clamping mergedCount", async () => {
+    // One raw finding survives, but the model emits two: it invented one.
+    const survivor = finding({ confidence: 0.9 });
+    const invented = finding({ file: "src/b.ts", description: "invented" });
+    create.mockResolvedValue(apiResponse([survivor, invented]));
+
+    const result = await synthesize(input([specialist("correctness", [survivor])]));
+
+    expect(result.mergedCount).toBe(0);
+    expect(result.addedCount).toBe(1);
+  });
+
+  it("reports addedCount 0 on a normal merge", async () => {
+    const a = finding({ lineStart: 10, description: "A" });
+    const b = finding({ lineStart: 11, description: "B" });
+    create.mockResolvedValue(apiResponse([finding({ description: "A/B" })]));
+
+    const result = await synthesize(input([specialist("correctness", [a, b])]));
+
+    expect(result.mergedCount).toBe(1);
+    expect(result.addedCount).toBe(0);
+  });
+
   it("produces a valid ReviewResponse from the tool call", async () => {
     const out = finding();
     create.mockResolvedValue(apiResponse([out]));

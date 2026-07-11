@@ -81,11 +81,39 @@ function lineLabel(finding: Finding): string {
     : `${finding.lineStart}-${finding.lineEnd}`;
 }
 
+/**
+ * Percent-encodes each path segment of a model-controlled file path so it
+ * cannot break out of the Markdown link's `(url)` or inject characters like
+ * `#` or whitespace. Slashes are preserved as path separators. Parentheses are
+ * encoded explicitly because `encodeURIComponent` leaves them intact, yet an
+ * unbalanced `)` would close the Markdown link early. The scheme and host are
+ * fixed literals, so no `javascript:`-style scheme override is possible - the
+ * path is only ever appended after `https://github.com/...`.
+ */
+function encodePathSegments(path: string): string {
+  return path
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29");
+}
+
+/**
+ * Makes a model-controlled string safe as the text of a Markdown inline code
+ * span. A backtick would close the span early (exposing the rest to link/HTML
+ * parsing) and a newline would break the bullet, so both are stripped; a file
+ * path never legitimately contains either.
+ */
+function sanitizeCodeSpan(text: string): string {
+  return text.replace(/`/g, "").replace(/[\r\n]+/g, " ");
+}
+
 /** Renders one finding as a Markdown bullet with a badge and clickable line link. */
 function renderFinding(finding: Finding, ctx: RenderContext): string {
   const badge = `![${finding.severity}](https://img.shields.io/badge/${finding.severity}-${SEVERITY_BADGE_COLOR[finding.severity]})`;
-  const label = `${finding.file}:${lineLabel(finding)}`;
-  const link = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.headSha}/${finding.file}#L${finding.lineStart}`;
+  const label = sanitizeCodeSpan(`${finding.file}:${lineLabel(finding)}`);
+  const link = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.headSha}/${encodePathSegments(finding.file)}#L${finding.lineStart}`;
   const location = `[\`${label}\`](${link})`;
   return `- ${badge} ${location} — ${finding.description}`;
 }
