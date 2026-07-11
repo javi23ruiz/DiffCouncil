@@ -1,7 +1,24 @@
 # Sentinel
 
 Sentinel is an open-source GitHub Action that reviews pull requests using Claude.
-It is currently in Phase 1: a walking skeleton with the project structure in place but no review logic implemented yet.
+
+**Status:** Phase 1 complete - see [ROADMAP.md](./ROADMAP.md) for what's next.
+
+## Architecture
+
+Sentinel Phase 1 is a prompt pipeline, not yet an agentic system.
+It runs one LLM call per pull request: build a prompt from the diff, send it to Claude, post the response.
+There is no tool use, no multi-step reasoning, and no cross-file awareness beyond what appears in the diff itself.
+The agentic loop - specialist agents reviewing in parallel, tool use, decision-making about what to investigate further - arrives in Phases 3-5.
+See [ROADMAP.md](./ROADMAP.md) for the phased plan and [docs/DECISIONS.md](./docs/DECISIONS.md) for why this shape was chosen for Phase 1.
+
+## How it works right now
+
+A workflow run triggers Sentinel on pull request open or update events.
+Sentinel fetches the PR's unified diff via the GitHub API.
+If the diff exceeds the 50k token budget, it is truncated and a truncation notice is appended so reviewers know the review is partial.
+The (possibly truncated) diff is sent to Claude in a single call using the prompt in `prompts/reviewer.md`, and the response is parsed into a review comment.
+Sentinel then posts that comment on the PR, or updates its existing comment in place on subsequent runs so reruns don't produce duplicates.
 
 ## How it looks
 
@@ -30,6 +47,7 @@ See `docs/DECISIONS.md` for the architecture decision log.
 
 ## Status
 
-Phase 1 scaffolding is in place. `src/*.ts` files currently contain typed function signatures with `TODO`/`not implemented` bodies; internals are implemented in later phases starting with `github.ts`.
+Phase 1 is complete: the end-to-end path from "PR opened" to "comment posted" works, including idempotent comment updates and token/cost telemetry.
+See [ROADMAP.md](./ROADMAP.md) for what was built, known limitations, and what Phase 2 adds.
 
 
