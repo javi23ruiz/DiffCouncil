@@ -5,6 +5,7 @@ import { Octokit } from "@octokit/rest";
 import { z } from "zod";
 
 import { truncateDiff } from "./context.js";
+import { formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
 import { runReview } from "./reviewer.js";
 
@@ -83,12 +84,13 @@ async function main(): Promise<void> {
       latencyMs: result.latencyMs,
     });
 
+    const footer = formatUsageFooter(model, result.usage);
     const comment = await upsertReviewComment(
       octokit,
       owner,
       repo,
       prNumber,
-      result.review
+      `${result.review}\n\n${footer}`
     );
     log({ stage: "comment", action: comment.action, commentId: comment.commentId });
   } catch (error: unknown) {
