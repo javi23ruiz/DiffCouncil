@@ -18,13 +18,25 @@ export const FindingSchema = z.object({
     .min(0)
     .max(1)
     .describe("model's confidence this is a real issue, 0 to 1"),
-  description: z.string().max(300),
-  suggestedFix: z.string().max(300).optional(),
+  /**
+   * Length capped to keep GitHub comments scannable; empirically 600 chars
+   * fits a typical multi-sentence finding.
+   */
+  description: z.string().max(600),
+  /**
+   * Length capped to keep GitHub comments scannable; empirically 600 chars
+   * fits a typical multi-sentence finding.
+   */
+  suggestedFix: z.string().max(600).optional(),
 });
 
 /** The full structured review returned by the model in one tool call. */
 export const ReviewResponseSchema = z.object({
-  summary: z.string().max(200),
+  /**
+   * Length capped to keep GitHub comments scannable; empirically 500 chars
+   * fits a typical multi-sentence review overview.
+   */
+  summary: z.string().max(500),
   findings: z.array(FindingSchema),
   verdict: z.enum(["looks_good", "comments_to_address", "blocking_issues"]),
 });

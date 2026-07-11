@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FindingSchema } from "./schema.js";
+import { FindingSchema, ReviewResponseSchema } from "./schema.js";
 
 const validFinding = {
   file: "src/index.ts",
@@ -35,5 +35,39 @@ describe("FindingSchema", () => {
       severity: "urgent",
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a 600-char description but rejects 601", () => {
+    expect(
+      FindingSchema.safeParse({ ...validFinding, description: "x".repeat(600) })
+        .success
+    ).toBe(true);
+    expect(
+      FindingSchema.safeParse({ ...validFinding, description: "x".repeat(601) })
+        .success
+    ).toBe(false);
+  });
+});
+
+describe("ReviewResponseSchema", () => {
+  const validReview = {
+    summary: "A concise overall review summary.",
+    findings: [validFinding],
+    verdict: "comments_to_address",
+  };
+
+  it("accepts a 500-char summary but rejects 501", () => {
+    expect(
+      ReviewResponseSchema.safeParse({
+        ...validReview,
+        summary: "x".repeat(500),
+      }).success
+    ).toBe(true);
+    expect(
+      ReviewResponseSchema.safeParse({
+        ...validReview,
+        summary: "x".repeat(501),
+      }).success
+    ).toBe(false);
   });
 });

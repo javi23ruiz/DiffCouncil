@@ -7,7 +7,7 @@ import { z } from "zod";
 import { summarizeDiff, truncateDiff } from "./context.js";
 import { formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
-import { runAllSpecialists } from "./orchestrator.js";
+import { runAllSpecialists, SPECIALIST_IDS } from "./orchestrator.js";
 import { renderReview } from "./render.js";
 import { synthesize } from "./synthesizer.js";
 
@@ -123,7 +123,8 @@ async function main(): Promise<void> {
     );
     log({
       stage: "usage_total",
-      specialists: results.length,
+      specialistsRan: SPECIALIST_IDS.length,
+      specialistsSucceeded: results.length,
       inputTokens: totalUsage.inputTokens,
       outputTokens: totalUsage.outputTokens,
     });

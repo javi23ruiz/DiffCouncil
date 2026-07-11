@@ -1,7 +1,10 @@
 import { join } from "node:path";
 
+import type { ZodError } from "zod";
+
 import {
   runSpecialist,
+  SpecialistValidationError,
   type SpecialistId,
   type SpecialistResult,
 } from "./reviewers/base.js";
@@ -12,11 +15,89 @@ import {
 // provided natively in the CJS bundle esbuild produces.
 const PROMPTS_DIR = join(__dirname, "..", "prompts");
 
-const SPECIALIST_IDS: readonly SpecialistId[] = [
+export const SPECIALIST_IDS: readonly SpecialistId[] = [
   "security",
   "correctness",
   "maintainability",
 ];
+
+/** Most issues we expand in a log line before collapsing the rest into a count. */
+const MAX_LOGGED_ISSUES = 5;
+/** Characters of raw model output we sample into the log for debugging. */
+const RAW_OUTPUT_SAMPLE_CHARS = 500;
+
+interface CompactIssue {
+  path: string;
+  code: string;
+  limit?: number;
+  actual?: number | string;
+}
+
+/** Walks an object graph by a Zod issue path, returning the value there. */
+function valueAtPath(root: unknown, path: readonly (string | number)[]): unknown {
+  return path.reduce<unknown>((acc, key) => {
+    if (acc !== null && typeof acc === "object") {
+      return (acc as Record<string | number, unknown>)[key];
+    }
+    return undefined;
+  }, root);
+}
+
+/**
+ * Reduces a ZodError into compact, log-friendly issue objects. For length
+ * violations, `limit` is the schema bound and `actual` is the offending
+ * string's length; other codes report the offending value.
+ */
+function compactIssues(zodError: ZodError, rawOutput: unknown): CompactIssue[] {
+  return zodError.issues.map((issue): CompactIssue => {
+    const compact: CompactIssue = {
+      path: issue.path.join(".") || "(root)",
+      code: issue.code,
+    };
+    if (issue.code === "too_big") {
+      compact.limit = Number(issue.maximum);
+    } else if (issue.code === "too_small") {
+      compact.limit = Number(issue.minimum);
+    }
+    const value = valueAtPath(rawOutput, issue.path);
+    if (typeof value === "string") {
+      compact.actual = value.length;
+    } else if (typeof value === "number") {
+      compact.actual = value;
+    }
+    return compact;
+  });
+}
+
+/** Logs a specialist failure: a compact issue summary for validation errors. */
+function logSpecialistError(specialistId: SpecialistId, error: unknown): void {
+  if (error instanceof SpecialistValidationError) {
+    const all = compactIssues(error.zodError, error.rawOutput);
+    const issues: (CompactIssue | string)[] = all.slice(0, MAX_LOGGED_ISSUES);
+    if (all.length > MAX_LOGGED_ISSUES) {
+      issues.push(`...and ${all.length - MAX_LOGGED_ISSUES} more`);
+    }
+    log({
+      stage: "specialist_error",
+      specialistId,
+      errorType: "validation",
+      issueCount: all.length,
+      issues,
+      rawOutputSample: JSON.stringify(error.rawOutput ?? null).slice(
+        0,
+        RAW_OUTPUT_SAMPLE_CHARS
+      ),
+    });
+    return;
+  }
+
+  log({
+    stage: "specialist_error",
+    specialistId,
+    errorType: "error",
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
 
 export interface OrchestratorInput {
   diff: string;
@@ -51,11 +132,7 @@ export async function runAllSpecialists(
           ...input,
         });
       } catch (error: unknown) {
-        log({
-          stage: "specialist_error",
-          specialistId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logSpecialistError(specialistId, error);
         return null;
       }
     })

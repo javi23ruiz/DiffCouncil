@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import Anthropic from "@anthropic-ai/sdk";
+import type { ZodError } from "zod";
 
 import { ReviewResponseSchema, type ReviewResponse } from "../schema.js";
 
@@ -9,6 +10,22 @@ const TEMPERATURE = 0;
 
 /** The three specialist reviewers. Each id doubles as its finding category. */
 export type SpecialistId = "security" | "correctness" | "maintainability";
+
+/**
+ * Thrown when a specialist's tool output fails schema validation. Carries the
+ * structured Zod error and the raw model output so callers can log a compact,
+ * debuggable summary rather than the full unreadable issues dump.
+ */
+export class SpecialistValidationError extends Error {
+  constructor(
+    readonly specialistId: SpecialistId,
+    readonly zodError: ZodError,
+    readonly rawOutput: unknown
+  ) {
+    super(`Specialist ${specialistId} submit_review input failed validation`);
+    this.name = "SpecialistValidationError";
+  }
+}
 
 export interface ReviewUsage {
   inputTokens: number;
@@ -223,8 +240,10 @@ export async function runSpecialist(
 
   const parsed = ReviewResponseSchema.safeParse(toolUse.input);
   if (!parsed.success) {
-    throw new Error(
-      `Specialist ${input.specialistId} submit_review input failed validation: ${parsed.error.message}`
+    throw new SpecialistValidationError(
+      input.specialistId,
+      parsed.error,
+      toolUse.input
     );
   }
 
