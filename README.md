@@ -3,6 +3,12 @@
 Sentinel is an open-source GitHub Action that reviews pull requests using Claude.
 It is currently in Phase 1: a walking skeleton with the project structure in place but no review logic implemented yet.
 
+## How it looks
+
+![Example Sentinel review](./assets/sentinel-review-example.png)
+
+*Sentinel reviewing one of its own PRs - findings with clickable line links, severity badges, and token/cost footer.*
+
 See `CLAUDE.md` for project conventions and current phase scope.
 See `docs/DECISIONS.md` for the architecture decision log.
 
