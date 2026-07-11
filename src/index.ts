@@ -7,6 +7,7 @@ import { z } from "zod";
 import { truncateDiff } from "./context.js";
 import { formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
+import { postprocessReview } from "./postprocess.js";
 import { runReview } from "./reviewer.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -84,13 +85,18 @@ async function main(): Promise<void> {
       latencyMs: result.latencyMs,
     });
 
+    const review = postprocessReview(result.review, {
+      owner,
+      repo,
+      headSha: pr.headSha,
+    });
     const footer = formatUsageFooter(model, result.usage);
     const comment = await upsertReviewComment(
       octokit,
       owner,
       repo,
       prNumber,
-      `${result.review}\n\n${footer}`
+      `${review}\n\n${footer}`
     );
     log({ stage: "comment", action: comment.action, commentId: comment.commentId });
   } catch (error: unknown) {
