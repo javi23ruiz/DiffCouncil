@@ -1,0 +1,22 @@
+name: "Sentinel"
+description: "AI code review for pull requests, powered by Claude"
+author: "Javier Ruiz Martinez"
+branding:
+  icon: "eye"
+  color: "purple"
+
+inputs:
+  anthropic-api-key:
+    description: "Anthropic API key used to call Claude"
+    required: true
+  github-token:
+    description: "GitHub token used to fetch PR data and post review comments"
+    required: true
+  model:
+    description: "Claude model id to use for review"
+    required: false
+    default: "claude-sonnet-4-6"
+
+runs:
+  using: "node20"
+  main: "dist/index.js"
