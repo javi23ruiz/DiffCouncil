@@ -26,4 +26,4 @@ See `docs/DECISIONS.md` for the architecture decision log.
 
 Phase 1 scaffolding is in place. `src/*.ts` files currently contain typed function signatures with `TODO`/`not implemented` bodies; internals are implemented in later phases starting with `github.ts`.
 
-< sentinel plumbing test more test -->
+< sentinel plumbing test more test and more test -->
