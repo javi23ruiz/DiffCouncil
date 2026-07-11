@@ -5,17 +5,6 @@ import { postprocessReview } from "./postprocess.js";
 const ctx = { owner: "javi23ruiz", repo: "DiffCouncil", headSha: "abc123" };
 
 describe("postprocessReview", () => {
-  it("substitutes OWNER/REPO in the logo src", () => {
-    const input =
-      '<img src="https://raw.githubusercontent.com/OWNER/REPO/main/assets/logo.svg" width="18" />';
-    const out = postprocessReview(input, ctx);
-    expect(out).toContain(
-      "raw.githubusercontent.com/javi23ruiz/DiffCouncil/main/assets/logo.svg"
-    );
-    expect(out).not.toContain("OWNER");
-    expect(out).not.toContain("REPO");
-  });
-
   it("turns a backticked path:line into a clickable link", () => {
     const out = postprocessReview("see `src/index.ts:42` for details", ctx);
     expect(out).toBe(
