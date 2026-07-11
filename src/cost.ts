@@ -1,4 +1,4 @@
-import type { ReviewUsage } from "./reviewer.js";
+import type { ReviewUsage } from "./reviewers/base.js";
 
 interface ModelPricing {
   /** USD per 1,000,000 input tokens. */

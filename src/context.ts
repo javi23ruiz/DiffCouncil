@@ -1,5 +1,26 @@
 export const MAX_DIFF_TOKENS = 50_000;
 
+export interface DiffSummary {
+  fileCount: number;
+  filesTouched: string[];
+}
+
+/**
+ * Extracts the set of files touched by a unified diff from its `diff --git`
+ * headers, using the post-image (`b/`) path. This is the lightweight structural
+ * summary the synthesizer sees in place of the full diff.
+ */
+export function summarizeDiff(diff: string): DiffSummary {
+  const filesTouched: string[] = [];
+  for (const line of diff.split("\n")) {
+    const match = /^diff --git a\/.+ b\/(.+)$/.exec(line);
+    if (match?.[1]) {
+      filesTouched.push(match[1]);
+    }
+  }
+  return { fileCount: filesTouched.length, filesTouched };
+}
+
 export interface TruncateResult {
   /** The (possibly truncated) diff, including a footer notice when files were omitted. */
   diff: string;

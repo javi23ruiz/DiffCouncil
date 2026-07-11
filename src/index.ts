@@ -4,11 +4,12 @@ import * as core from "@actions/core";
 import { Octokit } from "@octokit/rest";
 import { z } from "zod";
 
-import { truncateDiff } from "./context.js";
+import { summarizeDiff, truncateDiff } from "./context.js";
 import { formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
-import { postprocessReview } from "./postprocess.js";
-import { runReview } from "./reviewer.js";
+import { runAllSpecialists } from "./orchestrator.js";
+import { renderReview } from "./render.js";
+import { synthesize } from "./synthesizer.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -33,6 +34,10 @@ async function main(): Promise<void> {
     const apiKey = core.getInput("anthropic-api-key", { required: true });
     const githubToken = core.getInput("github-token", { required: true });
     const model = core.getInput("model") || DEFAULT_MODEL;
+    // The synthesizer can run on a different model than the specialists. It
+    // defaults to the same model for now; whether Opus reasons over the merged
+    // claims meaningfully better than Sonnet here is worth A/B testing.
+    const synthModel = process.env["SENTINEL_SYNTH_MODEL"] || model;
 
     const eventName = process.env["GITHUB_EVENT_NAME"];
     if (eventName !== "pull_request") {
@@ -69,7 +74,7 @@ async function main(): Promise<void> {
       truncated: truncation.truncated,
     });
 
-    const result = await runReview({
+    const results = await runAllSpecialists({
       diff: truncation.diff,
       prTitle: pr.title,
       prBody: pr.body,
@@ -77,20 +82,62 @@ async function main(): Promise<void> {
       model,
       apiKey,
     });
+    for (const result of results) {
+      log({
+        stage: "specialist",
+        specialistId: result.specialistId,
+        model,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        latencyMs: result.latencyMs,
+      });
+    }
+
+    const rawFindingCount = results.reduce(
+      (sum, result) => sum + result.response.findings.length,
+      0
+    );
+
+    const synthesis = await synthesize({
+      specialistResults: results,
+      diffSummary: summarizeDiff(truncation.diff),
+      model: synthModel,
+      apiKey,
+    });
     log({
-      stage: "review",
-      model,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      latencyMs: result.latencyMs,
+      stage: "synthesize",
+      model: synthModel,
+      inputTokens: synthesis.usage.inputTokens,
+      outputTokens: synthesis.usage.outputTokens,
+      latencyMs: synthesis.latencyMs,
+      mergedCount: synthesis.mergedCount,
+      droppedCount: synthesis.droppedCount,
     });
 
-    const review = postprocessReview(result.review, {
-      owner,
-      repo,
-      headSha: pr.headSha,
+    const totalUsage = [...results, synthesis].reduce(
+      (acc, part) => ({
+        inputTokens: acc.inputTokens + part.usage.inputTokens,
+        outputTokens: acc.outputTokens + part.usage.outputTokens,
+      }),
+      { inputTokens: 0, outputTokens: 0 }
+    );
+    log({
+      stage: "usage_total",
+      specialists: results.length,
+      inputTokens: totalUsage.inputTokens,
+      outputTokens: totalUsage.outputTokens,
     });
-    const footer = formatUsageFooter(model, result.usage);
+
+    const review = renderReview(
+      synthesis.response,
+      { owner, repo, headSha: pr.headSha },
+      {
+        specialistCount: results.length,
+        rawFindingCount,
+        synthesizedCount: synthesis.response.findings.length,
+      }
+    );
+    const footer = formatUsageFooter(model, totalUsage);
     const comment = await upsertReviewComment(
       octokit,
       owner,
