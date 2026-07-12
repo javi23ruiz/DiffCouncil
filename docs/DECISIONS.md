@@ -96,3 +96,99 @@ Use markdown output in Phase 1, and defer structured JSON output with schema val
 
 - Phase 1 findings are not machine-readable: they cannot be filtered, deduplicated, or scored without re-parsing markdown.
 - Phase 2 needs a breaking change to the reviewer's output format and a corresponding schema in `src/reviewer.ts`.
+
+## ADR-005: Tool-forced structured output over "please respond in JSON"
+
+Status: Accepted
+
+### Context
+
+Phase 2 makes findings machine-readable so they can be deduplicated, ranked, and filtered (the direction anticipated in ADR-004).
+There are two ways to get structured output from Claude: instruct the model in the prompt to "respond in JSON matching this shape," or force a tool call whose input schema defines the shape and let the API constrain generation to it.
+Prompt-only JSON is best-effort: the model can add prose around the JSON, omit fields, or drift from the shape, and every consumer must defensively parse.
+
+### Decision
+
+Use tool-forced structured output: each reviewer is forced to call a `submit_review` tool whose input schema is generated from the Zod schema, and the tool input is validated with Zod before use.
+
+### Rationale
+
+- Schema-enforced reliability is a prerequisite for downstream synthesis: the synthesizer consumes findings from three specialists, so a single malformed response cannot be tolerated or hand-patched.
+- Forcing the tool call constrains generation to the schema at the API level, rather than relying on the model to remember formatting instructions buried in a prompt.
+- Validating the tool input with Zod gives a single, explicit boundary where a bad response fails loudly instead of silently corrupting a finding.
+
+### Consequences
+
+- Reviewers cannot return free-form commentary alongside findings; everything they want to convey must fit the schema.
+- The schema and the tool definition must be kept aligned; this is handled by generating the tool's JSON schema from the Zod schema rather than hand-writing it twice.
+
+## ADR-006: Three specialists, not more
+
+Status: Accepted
+
+### Context
+
+The parallel-specialist design generalizes to any number of categories: performance, style, documentation, accessibility, dependency hygiene, and more could each get a dedicated reviewer.
+More specialists means more coverage but also more cost, more latency, and more overlapping findings for the synthesizer to reconcile.
+
+### Decision
+
+Ship exactly three specialists in Phase 2 - security, correctness, and maintainability - and defer any category expansion.
+
+### Rationale
+
+- Adding specialists without eval data is speculation: without measured precision and recall per category, there is no evidence that a fourth or fifth specialist improves review quality rather than just adding noise and cost.
+- Three broad categories cover the highest-value findings while keeping the synthesizer's job tractable.
+- Category expansion is deferred to post-Phase-4, when the eval harness makes per-category precision and recall measurable and expansion can be justified with data.
+
+### Consequences
+
+- Some real findings that fall outside the three categories (for example, pure performance regressions) are not surfaced yet.
+- The specialist set is intentionally revisited only after calibration exists, not on intuition.
+
+## ADR-007: Synthesizer as LLM judge, not merge function
+
+Status: Accepted
+
+### Context
+
+Three specialists reviewing the same diff produce overlapping findings that must be deduplicated, ranked, and filtered into one comment.
+This could be a deterministic merge function (group by file and line, compare strings) or an LLM pass that reasons over the combined findings.
+
+### Decision
+
+Implement the synthesizer as an LLM judge that reasons over the specialists' findings, rather than a deterministic string- or line-based merge function.
+
+### Rationale
+
+- Semantic deduplication requires reasoning, not string matching: "SQL injection" and "unvalidated query input" reported on the same line are the same issue, but no string comparison recognizes that.
+- Ranking findings by real severity and merging near-duplicates worded differently is a judgment task that a merge function cannot do without effectively reimplementing an LLM's understanding.
+
+### Consequences
+
+- Synthesis adds an extra model call, with its own cost, latency, and non-determinism.
+- Counts that must be reliable (how many findings were merged, dropped, or added) are derived deterministically in code from the inputs and outputs rather than trusted to the model's self-report.
+
+## ADR-008: Diff-only context preserved through Phase 2
+
+Status: Accepted
+
+### Context
+
+Cross-file context is the single biggest lever on review quality: most of what Sentinel currently misses is a consequence of seeing only the diff, with no view of call sites, callers, or type definitions outside the changed lines.
+Phase 2 already introduces two large changes at once: structured tool-forced outputs and a parallel-specialist-plus-synthesizer pipeline.
+
+### Decision
+
+Keep Sentinel diff-only through Phase 2, and defer cross-file context to later phases.
+
+### Rationale
+
+- Adding cross-file context at the same time as structured outputs and parallel specialists would mean three simultaneous unknowns, making it impossible to attribute a change in review quality to any one of them.
+- Sequencing the changes keeps each phase's effect measurable: Phase 2 isolates the value of structure and specialization before context is added.
+- Cross-file context is deferred to Phase 3 (a deterministic one-hop import walk) and Phase 5 (agent-driven retrieval), where it can be introduced and evaluated on its own.
+
+### Consequences
+
+- Phase 2 review quality is still bounded by what appears in the diff; findings that depend on cross-file effects remain out of reach until Phase 3.
+- The specialists and synthesizer are designed to consume structured findings, so adding a context-gathering step ahead of them later does not require reworking their contracts.
