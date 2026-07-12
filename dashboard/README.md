@@ -33,3 +33,4 @@ The dashboard reads traces from `../traces/` relative to `dashboard/src/data/loa
 3. Optionally add a navigation link in `src/components/Layout.tsx`.
 
 All data comes from `src/data/loader.ts` (cached singleton) and `src/data/derive.ts` (aggregation helpers).
+
