@@ -2,15 +2,23 @@
 
 Sentinel is an open-source GitHub Action that reviews pull requests using Claude.
 
-**Status:** Phase 1 complete - see [ROADMAP.md](./ROADMAP.md) for what's next.
+**Status:** Phase 2 complete - see [ROADMAP.md](./ROADMAP.md).
 
 ## Architecture
 
-Sentinel Phase 1 is a prompt pipeline, not yet an agentic system.
-It runs one LLM call per pull request: build a prompt from the diff, send it to Claude, post the response.
-There is no tool use, no multi-step reasoning, and no cross-file awareness beyond what appears in the diff itself.
-The agentic loop - specialist agents reviewing in parallel, tool use, decision-making about what to investigate further - arrives in Phases 3-5.
-See [ROADMAP.md](./ROADMAP.md) for the phased plan and [docs/DECISIONS.md](./docs/DECISIONS.md) for why this shape was chosen for Phase 1.
+Sentinel began, in Phase 1, as a single prompt pipeline: one LLM call per pull request (build a prompt from the diff, send it to Claude, post the response), with no tool use, no multi-step reasoning, and no cross-file awareness beyond the diff.
+
+Phase 2 introduces a structured parallel pipeline: three specialist reviewers run concurrently with tool-forced structured outputs, then a synthesizer merges and filters findings.
+This is not yet agentic - no LLM makes control-flow decisions.
+Phase 3 introduces the first routing decision.
+
+The fuller agentic loop - decision-making about what to investigate, tool use, cross-file retrieval - arrives across Phases 3-5.
+See [ROADMAP.md](./ROADMAP.md) for the phased plan and [docs/DECISIONS.md](./docs/DECISIONS.md) for why this shape was chosen.
+
+### Honest limitations
+
+- **Diff-only review.** Sentinel still sees only the unified diff, with no cross-file awareness yet.
+- **Heuristic noise filters.** Significance filters and confidence floors are hand-set, not calibrated against measured precision and recall; calibration comes in Phase 4.
 
 ## How it works right now
 
@@ -47,7 +55,7 @@ See `docs/DECISIONS.md` for the architecture decision log.
 
 ## Status
 
-Phase 1 is complete: the end-to-end path from "PR opened" to "comment posted" works, including idempotent comment updates and token/cost telemetry.
-See [ROADMAP.md](./ROADMAP.md) for what was built, known limitations, and what Phase 2 adds.
+Phase 2 is complete: three specialist reviewers run in parallel with structured, schema-validated outputs, and a synthesizer merges and filters their findings into a single review comment.
+See [ROADMAP.md](./ROADMAP.md) for what was built, known limitations, and what Phase 3 adds.
 
 
