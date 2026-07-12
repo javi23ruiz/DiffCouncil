@@ -9,7 +9,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -36,3 +36,14 @@ jobs:
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit trace files
+        if: success()
+        run: |
+          if [ -d traces ] && [ "$(ls -A traces 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add traces/
+            git commit -m "chore: add trace from sentinel run" || true
+            git push origin HEAD:"${{ github.head_ref }}" || true
+          fi
