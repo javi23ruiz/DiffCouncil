@@ -7,6 +7,7 @@ import { callSubmitReview } from "./review-call.js";
 import { buildSubmitReviewTool } from "./review-tool.js";
 import type { SpecialistResult } from "./reviewers/base.js";
 import type { Finding, ReviewResponse } from "./schema.js";
+import type { DroppedFinding, DuplicateGroup } from "./trace.js";
 
 // Confidence thresholds below which a raw finding is considered dropped.
 // Security gets a lower bar because a missed vulnerability is costlier than a
@@ -49,34 +50,129 @@ export interface SynthesizeResult {
    * surface rather than hide.
    */
   addedCount: number;
+  /** Groups of raw findings that correspond to a single kept finding. */
+  duplicateGroups: DuplicateGroup[];
+  /** Raw findings that did not survive (below threshold or unrepresented). */
+  droppedFindings: DroppedFinding[];
 }
 
 /** True when a raw finding falls below its category's confidence threshold. */
-function isDropped(finding: Finding): boolean {
+function isBelowThreshold(finding: Finding): boolean {
   const threshold =
     finding.category === "security" ? SECURITY_DROP_THRESHOLD : DROP_THRESHOLD;
   return finding.confidence < threshold;
 }
 
 /**
- * Derives merge/drop/add counts deterministically from the raw inputs and the
- * synthesized output, rather than trusting the model to self-report them.
- * `droppedCount` is how many raw findings fell below their threshold.
- * `mergedCount` is the net reduction among survivors (collapsed into fewer
- * output findings). `addedCount` is the opposite case: the model emitted MORE
- * findings than survived, which means it invented some - an anomaly its prompt
- * forbids, so we report it as its own count instead of clamping `mergedCount`
- * to 0 and hiding it. At most one of `mergedCount`/`addedCount` is non-zero.
+ * Determines whether a raw finding and a kept finding overlap enough to be
+ * considered the same issue. Matches when: same file AND within 10 lines.
  */
-function deriveStats(
+function findingsOverlap(raw: Finding, kept: Finding): boolean {
+  if (raw.file !== kept.file) return false;
+  const dist = Math.abs(raw.lineStart - kept.lineStart);
+  return dist <= 10;
+}
+
+/**
+ * Derives merge/drop/add counts AND the structured grouping data from the raw
+ * input findings and the synthesized output.
+ *
+ * Strategy:
+ * 1. Separate raw findings into dropped (below threshold) and surviving.
+ * 2. Match surviving findings to kept findings by file + line proximity.
+ *    The first surviving finding matching a kept finding claims it; subsequent
+ *    matches form a duplicate group.
+ * 3. Surviving findings that match no kept finding are dropped as "duplicate".
+ * 4. Dropped findings are tagged: "low_evidence" for below-threshold (general)
+ *    or "confidence_floor" for below-security-threshold security findings.
+ */
+export function matchFindings(
   rawFindings: readonly Finding[],
-  outputCount: number
-): { mergedCount: number; droppedCount: number; addedCount: number } {
-  const droppedCount = rawFindings.filter(isDropped).length;
-  const survivingCount = rawFindings.length - droppedCount;
-  const mergedCount = Math.max(0, survivingCount - outputCount);
-  const addedCount = Math.max(0, outputCount - survivingCount);
-  return { mergedCount, droppedCount, addedCount };
+  keptFindings: readonly Finding[]
+): {
+  mergedCount: number;
+  droppedCount: number;
+  addedCount: number;
+  duplicateGroups: DuplicateGroup[];
+  droppedFindings: DroppedFinding[];
+} {
+  // Partition raw findings.
+  const dropped: { finding: Finding; reason: DroppedFinding["reason"] }[] = [];
+  const surviving: Finding[] = [];
+
+  for (const raw of rawFindings) {
+    if (isBelowThreshold(raw)) {
+      const reason =
+        raw.category === "security" && raw.confidence >= DROP_THRESHOLD
+          ? ("confidence_floor" as const)
+          : ("low_evidence" as const);
+      dropped.push({ finding: raw, reason });
+    } else {
+      surviving.push(raw);
+    }
+  }
+
+  // Match surviving to kept. Greedy first-match, one kept finding per result.
+  const keptMatched = new Set<number>(); // indices into keptFindings
+  const groupMap = new Map<number, string[]>(); // keptIdx -> [rawIds]
+  const unmatchedSurvivors: Finding[] = [];
+
+  for (const raw of surviving) {
+    let matched = false;
+    for (let i = 0; i < keptFindings.length; i++) {
+      const kept = keptFindings[i]!;
+      if (findingsOverlap(raw, kept)) {
+        if (!keptMatched.has(i)) {
+          // First raw matched to this kept finding — representative.
+          keptMatched.add(i);
+          groupMap.set(i, [raw.id ?? "unknown"]);
+          matched = true;
+          break;
+        } else {
+          // Another raw already claimed this kept — merge.
+          groupMap.get(i)?.push(raw.id ?? "unknown");
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) {
+      unmatchedSurvivors.push(raw);
+    }
+  }
+
+  // Build duplicate groups: only groups with >1 member are real duplicates.
+  const duplicateGroups: DuplicateGroup[] = [];
+  for (const [i, merged] of groupMap) {
+    if (merged.length > 1) {
+      const rep = merged[0]!;
+      duplicateGroups.push({
+        representative: rep,
+        merged: merged.slice(1),
+      });
+    }
+  }
+
+  // Unmatched survivors are effectively dropped (absorbed into another finding).
+  for (const raw of unmatchedSurvivors) {
+    dropped.push({ finding: raw, reason: "duplicate" });
+  }
+
+  const droppedCount = dropped.length;
+  const survivingCount = surviving.length;
+  const mergedCount = Math.max(0, survivingCount - keptFindings.length);
+  const addedCount = Math.max(0, keptFindings.length - survivingCount);
+
+  return {
+    mergedCount,
+    droppedCount,
+    addedCount,
+    duplicateGroups,
+    droppedFindings: dropped.map((d) => ({
+      finding: d.finding,
+      reason: d.reason,
+    })),
+  };
 }
 
 /**
@@ -113,6 +209,7 @@ function mockResult(input: SynthesizeInput): SynthesizeResult {
     (r) => r.response.findings
   );
   const kept = rawFindings.slice(0, 1);
+  const match = matchFindings(rawFindings, kept);
   return {
     response: {
       summary: "Mock synthesized review across specialists.",
@@ -121,7 +218,11 @@ function mockResult(input: SynthesizeInput): SynthesizeResult {
     },
     usage: { inputTokens: 0, outputTokens: 0 },
     latencyMs: 0,
-    ...deriveStats(rawFindings, kept.length),
+    mergedCount: match.mergedCount,
+    droppedCount: match.droppedCount,
+    addedCount: match.addedCount,
+    duplicateGroups: match.duplicateGroups,
+    droppedFindings: match.droppedFindings,
   };
 }
 
@@ -154,8 +255,14 @@ export async function synthesize(
     tool: SUBMIT_REVIEW_TOOL,
   });
 
+  const match = matchFindings(rawFindings, outcome.response.findings);
+
   return {
     ...outcome,
-    ...deriveStats(rawFindings, outcome.response.findings.length),
+    mergedCount: match.mergedCount,
+    droppedCount: match.droppedCount,
+    addedCount: match.addedCount,
+    duplicateGroups: match.duplicateGroups,
+    droppedFindings: match.droppedFindings,
   };
 }

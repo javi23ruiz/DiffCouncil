@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import * as core from "@actions/core";
@@ -5,12 +6,19 @@ import { Octokit } from "@octokit/rest";
 import { z } from "zod";
 
 import { summarizeDiff, truncateDiff } from "./context.js";
-import { formatUsageFooter } from "./cost.js";
+import { estimateCostUsd, formatUsageFooter } from "./cost.js";
 import { fetchPullRequest, upsertReviewComment } from "./github.js";
 import { log } from "./log.js";
 import { runAllSpecialists, SPECIALIST_IDS } from "./orchestrator.js";
 import { renderReview } from "./render.js";
+import { assignFindingId } from "./schema.js";
 import { synthesize } from "./synthesizer.js";
+import {
+  pushTraceEvent,
+  resetTrace,
+  writeTraceFile,
+  type ModelBreakdown,
+} from "./trace.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -39,6 +47,8 @@ const PullRequestEventSchema = z.object({
 
 async function main(): Promise<void> {
   const start = Date.now();
+  const runId = randomUUID();
+  resetTrace();
 
   try {
     const apiKey = core.getInput("anthropic-api-key", { required: true });
@@ -68,6 +78,17 @@ async function main(): Promise<void> {
     const repo = event.repository.name;
     const prNumber = event.pull_request.number;
 
+    pushTraceEvent({
+      type: "run_start",
+      runId,
+      timestamp: new Date().toISOString(),
+      prNumber,
+      repo: `${owner}/${repo}`,
+      headSha: "", // populated after fetch
+      model,
+      synthModel,
+    });
+
     const octokit = new Octokit({ auth: githubToken });
 
     const pr = await fetchPullRequest(octokit, owner, repo, prNumber);
@@ -86,6 +107,16 @@ async function main(): Promise<void> {
       truncated: truncation.truncated,
     });
 
+    const diffSummary = summarizeDiff(truncation.diff);
+    pushTraceEvent({
+      type: "context_construction",
+      diffFiles: diffSummary.filesTouched,
+      diffLineCount: truncation.diffLineCount,
+      truncatedFiles: truncation.truncatedFiles,
+      skippedFiles: truncation.skippedFiles,
+      finalDiffTokens: truncation.keptTokens,
+    });
+
     const results = await runAllSpecialists({
       diff: truncation.diff,
       prTitle: pr.title,
@@ -94,7 +125,12 @@ async function main(): Promise<void> {
       model,
       apiKey,
     });
+
+    // Assign stable finding IDs.
     for (const result of results) {
+      result.response.findings = result.response.findings.map((f) =>
+        assignFindingId(result.specialistId, f)
+      );
       log({
         stage: "specialist",
         specialistId: result.specialistId,
@@ -146,6 +182,20 @@ async function main(): Promise<void> {
       });
     }
 
+    pushTraceEvent({
+      type: "synthesizer_reasoning",
+      model: synthModel,
+      inputTokens: synthesis.usage.inputTokens,
+      outputTokens: synthesis.usage.outputTokens,
+      latencyMs: synthesis.latencyMs,
+      rawInputFindingCount: rawFindingCount,
+      duplicateGroups: synthesis.duplicateGroups,
+      droppedFindings: synthesis.droppedFindings,
+      keptFindings: synthesis.response.findings,
+      verdict: synthesis.response.verdict,
+      verdictRationale: synthesis.response.summary,
+    });
+
     const totalUsage = [...results, synthesis].reduce(
       (acc, part) => ({
         inputTokens: acc.inputTokens + part.usage.inputTokens,
@@ -179,6 +229,50 @@ async function main(): Promise<void> {
       `${review}\n\n${footer}`
     );
     log({ stage: "comment", action: comment.action, commentId: comment.commentId });
+
+    pushTraceEvent({
+      type: "comment",
+      action: comment.action,
+      commentId: comment.commentId,
+    });
+
+    // Build cost breakdown for trace.
+    const modelBreakdown: ModelBreakdown[] = [];
+    const modelsSeen = new Map<string, { inputTokens: number; outputTokens: number }>();
+    for (const result of results) {
+      const key = model;
+      const acc = modelsSeen.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+      acc.inputTokens += result.usage.inputTokens;
+      acc.outputTokens += result.usage.outputTokens;
+      modelsSeen.set(key, acc);
+    }
+    {
+      const acc = modelsSeen.get(synthModel) ?? { inputTokens: 0, outputTokens: 0 };
+      acc.inputTokens += synthesis.usage.inputTokens;
+      acc.outputTokens += synthesis.usage.outputTokens;
+      modelsSeen.set(synthModel, acc);
+    }
+    let totalCostUsd = 0;
+    for (const [m, u] of modelsSeen) {
+      const cost = estimateCostUsd(m, u) ?? 0;
+      totalCostUsd += cost;
+      modelBreakdown.push({
+        model: m,
+        inputTokens: u.inputTokens,
+        outputTokens: u.outputTokens,
+        costUsd: cost,
+      });
+    }
+
+    const totalMs = Date.now() - start;
+    pushTraceEvent({
+      type: "run_end",
+      ms: totalMs,
+      totalCostUsd,
+      modelBreakdown,
+    });
+
+    await writeTraceFile(runId, synthesis.response.verdict, synthesis.response.findings.length);
   } catch (error: unknown) {
     core.setFailed(error instanceof Error ? error.message : String(error));
   } finally {

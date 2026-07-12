@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -23,6 +24,15 @@ function resolvePromptsDir(): string {
 }
 
 export const PROMPTS_DIR = resolvePromptsDir();
+
+/**
+ * Computes a SHA-256 digest of a prompt string, truncated to the first 12 hex
+ * characters. This is a compact, human-scannable fingerprint used in traces
+ * and the dashboard to track prompt version changes across runs.
+ */
+export function computePromptSha(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 12);
+}
 
 /**
  * Loads a prompt file from disk. A missing file becomes an actionable error
