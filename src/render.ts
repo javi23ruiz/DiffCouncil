@@ -109,13 +109,34 @@ function sanitizeCodeSpan(text: string): string {
   return text.replace(/`/g, "").replace(/[\r\n]+/g, " ");
 }
 
+/**
+ * Makes a model-controlled prose string safe to inline into the Markdown
+ * comment. The summary and finding descriptions are model output derived from
+ * an attacker's diff, so we:
+ *  - HTML-escape `&`, `<`, `>`, which neutralizes any raw HTML - most importantly
+ *    a `</details>` that would break out of our collapsible block, and `<img>`
+ *    tags. GitHub's own pipeline also strips scripts and `javascript:` schemes
+ *    and proxies images through Camo, but we do not rely on that alone.
+ *  - Collapse line breaks to spaces so the text stays within its bullet and
+ *    cannot inject new block-level Markdown (headings, list items, tables).
+ * Inline emphasis and code in descriptions are intentionally preserved so real
+ * findings stay readable.
+ */
+function sanitizeProse(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/[\r\n]+/g, " ");
+}
+
 /** Renders one finding as a Markdown bullet with a badge and clickable line link. */
 function renderFinding(finding: Finding, ctx: RenderContext): string {
   const badge = `![${finding.severity}](https://img.shields.io/badge/${finding.severity}-${SEVERITY_BADGE_COLOR[finding.severity]})`;
   const label = sanitizeCodeSpan(`${finding.file}:${lineLabel(finding)}`);
   const link = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.headSha}/${encodePathSegments(finding.file)}#L${finding.lineStart}`;
   const location = `[\`${label}\`](${link})`;
-  return `- ${badge} ${location} — ${finding.description}`;
+  return `- ${badge} ${location} — ${sanitizeProse(finding.description)}`;
 }
 
 /** Renders the synthesis stats footer line. */
@@ -142,7 +163,7 @@ export function renderReview(
     renderCountLine(sorted),
     "",
     "### Summary",
-    review.summary,
+    sanitizeProse(review.summary),
     "",
     `**Verdict:** ${VERDICT_LABEL[review.verdict]}`,
   ];

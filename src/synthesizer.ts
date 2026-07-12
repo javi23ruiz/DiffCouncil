@@ -1,33 +1,22 @@
 import { join } from "node:path";
 
-import Anthropic from "@anthropic-ai/sdk";
-
 import type { DiffSummary } from "./context.js";
-import { loadPrompt } from "./prompt-loader.js";
+import { loadPrompt, PROMPTS_DIR } from "./prompt-loader.js";
 import { renderUntrusted } from "./prompt-safety.js";
+import { callSubmitReview } from "./review-call.js";
 import { buildSubmitReviewTool } from "./review-tool.js";
 import type { SpecialistResult } from "./reviewers/base.js";
-import {
-  ReviewResponseSchema,
-  type Finding,
-  type ReviewResponse,
-} from "./schema.js";
-
-const MAX_TOKENS = 4096;
-const TEMPERATURE = 0;
+import type { Finding, ReviewResponse } from "./schema.js";
 
 // Confidence thresholds below which a raw finding is considered dropped.
 // Security gets a lower bar because a missed vulnerability is costlier than a
-// false positive.
-const DROP_THRESHOLD = 0.5;
-const SECURITY_DROP_THRESHOLD = 0.4;
+// false positive. These MUST stay in sync with the numbers stated in
+// prompts/synthesizer.md, which instruct the model to apply the same cut;
+// synthesizer.threshold.test.ts guards against drift between the two.
+export const DROP_THRESHOLD = 0.5;
+export const SECURITY_DROP_THRESHOLD = 0.4;
 
-// The prompt lives in prompts/synthesizer.md at the repo root. The bundled
-// action (dist/index.js) sits one level under the repo root, so
-// "../prompts/synthesizer.md" relative to the bundle directory resolves to the
-// repo-root prompts/ folder. `__dirname` is native in the CJS bundle esbuild
-// produces.
-const SYSTEM_PROMPT_PATH = join(__dirname, "..", "prompts", "synthesizer.md");
+const SYSTEM_PROMPT_PATH = join(PROMPTS_DIR, "synthesizer.md");
 
 /**
  * The `submit_review` tool the synthesizer is forced to call. Its input schema
@@ -157,45 +146,16 @@ export async function synthesize(
   const systemPrompt = await loadPrompt(SYSTEM_PROMPT_PATH);
   const userMessage = buildUserMessage(rawFindings, input.diffSummary);
 
-  const client = new Anthropic({ apiKey: input.apiKey });
-
-  const start = Date.now();
-  const response = await client.messages.create({
+  const outcome = await callSubmitReview({
+    apiKey: input.apiKey,
     model: input.model,
-    max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
-    system: systemPrompt,
-    tools: [SUBMIT_REVIEW_TOOL],
-    tool_choice: { type: "tool", name: "submit_review" },
-    messages: [{ role: "user", content: userMessage }],
+    systemPrompt,
+    userMessage,
+    tool: SUBMIT_REVIEW_TOOL,
   });
-  const latencyMs = Date.now() - start;
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock =>
-      block.type === "tool_use" && block.name === "submit_review"
-  );
-  if (!toolUse) {
-    throw new Error(
-      "Synthesizer did not return a submit_review tool call. Response contained: " +
-        response.content.map((block) => block.type).join(", ")
-    );
-  }
-
-  const parsed = ReviewResponseSchema.safeParse(toolUse.input);
-  if (!parsed.success) {
-    throw new Error(
-      `Synthesizer submit_review input failed validation: ${parsed.error.message}`
-    );
-  }
 
   return {
-    response: parsed.data,
-    usage: {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    },
-    latencyMs,
-    ...deriveStats(rawFindings, parsed.data.findings.length),
+    ...outcome,
+    ...deriveStats(rawFindings, outcome.response.findings.length),
   };
 }

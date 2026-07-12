@@ -3,18 +3,13 @@ import { join } from "node:path";
 import type { ZodError } from "zod";
 
 import { log } from "./log.js";
+import { PROMPTS_DIR } from "./prompt-loader.js";
 import {
   runSpecialist,
   SpecialistValidationError,
   type SpecialistId,
   type SpecialistResult,
 } from "./reviewers/base.js";
-
-// Prompts live in prompts/ at the repo root. The bundled action (dist/index.js)
-// sits one level under the repo root, so "../prompts/<id>.md" relative to the
-// bundle directory resolves to the repo-root prompts/ folder. `__dirname` is
-// provided natively in the CJS bundle esbuild produces.
-const PROMPTS_DIR = join(__dirname, "..", "prompts");
 
 export const SPECIALIST_IDS: readonly SpecialistId[] = [
   "security",
@@ -26,6 +21,22 @@ export const SPECIALIST_IDS: readonly SpecialistId[] = [
 const MAX_LOGGED_ISSUES = 5;
 /** Characters of raw model output we sample into the log for debugging. */
 const RAW_OUTPUT_SAMPLE_CHARS = 500;
+
+/**
+ * Produces a bounded, single-line, control-character-free sample of raw model
+ * output for logging. The output is attacker-influenced (it derives from the PR
+ * diff), so beyond bounding its length we strip every control character - not
+ * just the line separators log.ts escapes at the transport layer - so the sample
+ * cannot smuggle line breaks, terminal escapes, or other control bytes into a
+ * downstream log parser or SIEM. Structural JSON characters are left intact
+ * (the sample IS serialized JSON) but are inert: the shared logger re-encodes
+ * this whole value as one escaped JSON string.
+ */
+function sampleRawOutput(value: unknown): string {
+  return JSON.stringify(value ?? null)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, " ")
+    .slice(0, RAW_OUTPUT_SAMPLE_CHARS);
+}
 
 interface CompactIssue {
   path: string;
@@ -84,10 +95,7 @@ function logSpecialistError(specialistId: SpecialistId, error: unknown): void {
       errorType: "validation",
       issueCount: all.length,
       issues,
-      rawOutputSample: JSON.stringify(error.rawOutput ?? null).slice(
-        0,
-        RAW_OUTPUT_SAMPLE_CHARS
-      ),
+      rawOutputSample: sampleRawOutput(error.rawOutput),
     });
     return;
   }
@@ -115,6 +123,10 @@ export interface OrchestratorInput {
  * A specialist that throws is logged and dropped: one crashing specialist must
  * not fail the whole review, so this returns whatever partial set succeeded
  * (possibly empty). Results are returned unmerged; synthesis happens later.
+ *
+ * A completion summary is always logged - including an explicit
+ * `allSpecialistsFailed` flag - so a total failure (empty result set) is never
+ * silent. The caller decides how to treat an empty set.
  */
 export async function runAllSpecialists(
   input: OrchestratorInput
@@ -134,5 +146,16 @@ export async function runAllSpecialists(
     })
   );
 
-  return settled.filter((result): result is SpecialistResult => result !== null);
+  const results = settled.filter(
+    (result): result is SpecialistResult => result !== null
+  );
+  log({
+    stage: "specialists_complete",
+    ran: SPECIALIST_IDS.length,
+    succeeded: results.length,
+    failed: SPECIALIST_IDS.length - results.length,
+    allSpecialistsFailed: results.length === 0,
+  });
+
+  return results;
 }

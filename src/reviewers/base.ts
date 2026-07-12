@@ -1,13 +1,16 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { ZodError } from "zod";
 
 import { loadPrompt } from "../prompt-loader.js";
 import { renderUntrusted } from "../prompt-safety.js";
+import {
+  callSubmitReview,
+  SubmitReviewValidationError,
+  type ReviewUsage,
+} from "../review-call.js";
 import { buildSubmitReviewTool } from "../review-tool.js";
-import { ReviewResponseSchema, type ReviewResponse } from "../schema.js";
+import type { ReviewResponse } from "../schema.js";
 
-const MAX_TOKENS = 4096;
-const TEMPERATURE = 0;
+export type { ReviewUsage };
 
 /** The three specialist reviewers. Each id doubles as its finding category. */
 export type SpecialistId = "security" | "correctness" | "maintainability";
@@ -26,11 +29,6 @@ export class SpecialistValidationError extends Error {
     super(`Specialist ${specialistId} submit_review input failed validation`);
     this.name = "SpecialistValidationError";
   }
-}
-
-export interface ReviewUsage {
-  inputTokens: number;
-  outputTokens: number;
 }
 
 export interface SpecialistInput {
@@ -105,14 +103,13 @@ function mockResult(specialistId: SpecialistId): SpecialistResult {
 }
 
 /**
- * Runs a single specialist reviewer: loads its system prompt, calls the
- * Anthropic Messages API forcing the `submit_review` tool, and validates the
- * tool input against ReviewResponseSchema.
+ * Runs a single specialist reviewer: loads its system prompt and makes the
+ * forced `submit_review` call via the shared review-call helper.
  *
  * @returns The parsed structured response tagged with the specialist's id,
  * along with token usage and wall-clock latency.
- * @throws If the model does not return a tool call, or its input fails schema
- * validation.
+ * @throws SpecialistValidationError if the tool input fails schema validation.
+ * @throws Error if the model does not return a tool call.
  */
 export async function runSpecialist(
   input: SpecialistInput
@@ -124,47 +121,25 @@ export async function runSpecialist(
   const systemPrompt = await loadPrompt(input.systemPromptPath);
   const userMessage = buildUserMessage(input);
 
-  const client = new Anthropic({ apiKey: input.apiKey });
-
-  const start = Date.now();
-  const response = await client.messages.create({
-    model: input.model,
-    max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
-    system: systemPrompt,
-    tools: [SUBMIT_REVIEW_TOOL],
-    tool_choice: { type: "tool", name: "submit_review" },
-    messages: [{ role: "user", content: userMessage }],
-  });
-  const latencyMs = Date.now() - start;
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock =>
-      block.type === "tool_use" && block.name === "submit_review"
-  );
-  if (!toolUse) {
-    throw new Error(
-      `Specialist ${input.specialistId} did not return a submit_review tool call. ` +
-        `Response contained: ${response.content.map((block) => block.type).join(", ")}`
-    );
+  try {
+    const outcome = await callSubmitReview({
+      apiKey: input.apiKey,
+      model: input.model,
+      systemPrompt,
+      userMessage,
+      tool: SUBMIT_REVIEW_TOOL,
+    });
+    return { specialistId: input.specialistId, ...outcome };
+  } catch (error: unknown) {
+    // Re-tag a validation failure with the specialist's id so the orchestrator
+    // can attribute and summarize it; other errors propagate unchanged.
+    if (error instanceof SubmitReviewValidationError) {
+      throw new SpecialistValidationError(
+        input.specialistId,
+        error.zodError,
+        error.rawOutput
+      );
+    }
+    throw error;
   }
-
-  const parsed = ReviewResponseSchema.safeParse(toolUse.input);
-  if (!parsed.success) {
-    throw new SpecialistValidationError(
-      input.specialistId,
-      parsed.error,
-      toolUse.input
-    );
-  }
-
-  return {
-    specialistId: input.specialistId,
-    response: parsed.data,
-    usage: {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    },
-    latencyMs,
-  };
 }

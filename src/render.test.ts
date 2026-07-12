@@ -107,6 +107,39 @@ describe("renderReview", () => {
     expect(out).not.toContain("[`a`b.ts");
   });
 
+  it("escapes HTML in a description so it cannot break out of the details block", () => {
+    const out = renderReview(
+      review({
+        findings: [finding({ description: "bug </details><img src=x> more" })],
+      }),
+      ctx,
+      stats
+    );
+    expect(out).toContain("&lt;/details&gt;&lt;img src=x&gt;");
+    // Only our own closing tag survives as real HTML.
+    expect(out.match(/<\/details>/g) ?? []).toHaveLength(1);
+  });
+
+  it("collapses newlines in a description so it stays on its bullet", () => {
+    const out = renderReview(
+      review({ findings: [finding({ description: "line one\nline two" })] }),
+      ctx,
+      stats
+    );
+    expect(out).toContain("line one line two");
+    expect(out).not.toContain("line one\nline two");
+  });
+
+  it("escapes HTML in the summary", () => {
+    const out = renderReview(
+      review({ summary: "watch out for <script>alert(1)</script>" }),
+      ctx,
+      stats
+    );
+    expect(out).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(out).not.toContain("<script>");
+  });
+
   it("renders the synthesis stats footer", () => {
     const out = renderReview(review({ findings: [finding()] }), ctx, stats);
     expect(out).toContain(

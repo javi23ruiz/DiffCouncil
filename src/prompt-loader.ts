@@ -1,4 +1,28 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+/**
+ * Absolute path to the repo's prompts/ directory, resolved once relative to
+ * this module. The action is built as a single CJS bundle at dist/index.js, one
+ * level under the repo root, so "../prompts" resolves there; the same holds when
+ * running from src/ under the test runner.
+ *
+ * `__dirname` only exists in CommonJS. We assert it rather than assume it: if
+ * this code is ever loaded as ESM (where `__dirname` is undefined) the path
+ * would otherwise resolve silently against the process cwd. Failing loudly turns
+ * that latent misconfiguration into an obvious error at startup.
+ */
+function resolvePromptsDir(): string {
+  if (typeof __dirname === "undefined") {
+    throw new Error(
+      "Cannot resolve the prompts directory: __dirname is undefined. Sentinel " +
+        "is built as a CommonJS bundle; loading it as ESM is not supported."
+    );
+  }
+  return join(__dirname, "..", "prompts");
+}
+
+export const PROMPTS_DIR = resolvePromptsDir();
 
 /**
  * Loads a prompt file from disk. A missing file becomes an actionable error

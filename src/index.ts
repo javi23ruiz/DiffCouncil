@@ -14,6 +14,20 @@ import { synthesize } from "./synthesizer.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
+/**
+ * Model identifiers are external input (an action input, or the
+ * SENTINEL_SYNTH_MODEL env var) that we forward straight to the Anthropic API,
+ * so they are validated at the boundary rather than trusted. This accepts the
+ * Anthropic model-id shape (e.g. "claude-sonnet-4-6") without pinning an
+ * allowlist of exact ids, which would need editing every model release.
+ */
+const ModelNameSchema = z
+  .string()
+  .regex(
+    /^claude-[a-z0-9]+(?:[.-][a-z0-9]+)*$/,
+    'must be a Claude model id such as "claude-sonnet-4-6"'
+  );
+
 /** Shape of the `pull_request` webhook payload, validated at the boundary. */
 const PullRequestEventSchema = z.object({
   repository: z.object({
@@ -29,11 +43,13 @@ async function main(): Promise<void> {
   try {
     const apiKey = core.getInput("anthropic-api-key", { required: true });
     const githubToken = core.getInput("github-token", { required: true });
-    const model = core.getInput("model") || DEFAULT_MODEL;
+    const model = ModelNameSchema.parse(core.getInput("model") || DEFAULT_MODEL);
     // The synthesizer can run on a different model than the specialists. It
     // defaults to the same model for now; whether Opus reasons over the merged
     // claims meaningfully better than Sonnet here is worth A/B testing.
-    const synthModel = process.env["SENTINEL_SYNTH_MODEL"] || model;
+    const synthModel = ModelNameSchema.parse(
+      process.env["SENTINEL_SYNTH_MODEL"] || model
+    );
 
     const eventName = process.env["GITHUB_EVENT_NAME"];
     if (eventName !== "pull_request") {
@@ -87,6 +103,15 @@ async function main(): Promise<void> {
         outputTokens: result.usage.outputTokens,
         latencyMs: result.latencyMs,
       });
+    }
+
+    // Every specialist failed: there is nothing to synthesize. Abort loudly
+    // instead of running the synthesizer over zero findings, which would post a
+    // misleading "looks good" review. Per-specialist errors were already logged.
+    if (results.length === 0) {
+      throw new Error(
+        `All ${SPECIALIST_IDS.length} specialists failed; aborting review. See the specialist_error log entries above for details.`
+      );
     }
 
     const rawFindingCount = results.reduce(
