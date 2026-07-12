@@ -1,5 +1,7 @@
 # Sentinel
 
+<!-- test sentinel trigger -->
+
 Sentinel is an open-source GitHub Action that reviews pull requests using Claude.
 
 **Status:** Phase 2 complete - see [ROADMAP.md](./ROADMAP.md).
