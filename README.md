@@ -53,6 +53,14 @@ See `docs/DECISIONS.md` for the architecture decision log.
 - `src/reviewer.ts` - calls Claude with the prompt loaded from `prompts/reviewer.md` and the PR diff.
 - `src/context.ts` - token estimation and diff truncation (50k token limit, with a truncation notice appended when truncation occurs).
 
+## Dashboard
+
+Sentinel has an observability dashboard deployed via GitHub Pages.
+
+**URL:** `<REPO_URL>/dashboard-url` *(placeholder — fill in after first deploy)*
+
+See [dashboard/README.md](./dashboard/README.md) for local development instructions.
+
 ## Status
 
 Phase 2 is complete: three specialist reviewers run in parallel with structured, schema-validated outputs, and a synthesizer merges and filters their findings into a single review comment.

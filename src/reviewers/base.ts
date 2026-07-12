@@ -1,6 +1,6 @@
 import type { ZodError } from "zod";
 
-import { loadPrompt } from "../prompt-loader.js";
+import { computePromptSha, loadPrompt } from "../prompt-loader.js";
 import { renderUntrusted } from "../prompt-safety.js";
 import {
   callSubmitReview,
@@ -47,6 +47,8 @@ export interface SpecialistResult {
   response: ReviewResponse;
   usage: ReviewUsage;
   latencyMs: number;
+  /** SHA-256 of the specialist's system prompt content, first 12 hex chars. */
+  promptSha: string;
 }
 
 /**
@@ -99,6 +101,7 @@ function mockResult(specialistId: SpecialistId): SpecialistResult {
     },
     usage: { inputTokens: 0, outputTokens: 0 },
     latencyMs: 0,
+    promptSha: "mock",
   };
 }
 
@@ -119,6 +122,7 @@ export async function runSpecialist(
   }
 
   const systemPrompt = await loadPrompt(input.systemPromptPath);
+  const promptSha = computePromptSha(systemPrompt);
   const userMessage = buildUserMessage(input);
 
   try {
@@ -129,7 +133,7 @@ export async function runSpecialist(
       userMessage,
       tool: SUBMIT_REVIEW_TOOL,
     });
-    return { specialistId: input.specialistId, ...outcome };
+    return { specialistId: input.specialistId, promptSha, ...outcome };
   } catch (error: unknown) {
     // Re-tag a validation failure with the specialist's id so the orchestrator
     // can attribute and summarize it; other errors propagate unchanged.

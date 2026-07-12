@@ -3,13 +3,14 @@ import { join } from "node:path";
 import type { ZodError } from "zod";
 
 import { log } from "./log.js";
-import { PROMPTS_DIR } from "./prompt-loader.js";
+import { computePromptSha, loadPrompt, PROMPTS_DIR } from "./prompt-loader.js";
 import {
   runSpecialist,
   SpecialistValidationError,
   type SpecialistId,
   type SpecialistResult,
 } from "./reviewers/base.js";
+import { pushTraceEvent } from "./trace.js";
 
 export const SPECIALIST_IDS: readonly SpecialistId[] = [
   "security",
@@ -133,14 +134,57 @@ export async function runAllSpecialists(
 ): Promise<SpecialistResult[]> {
   const settled = await Promise.all(
     SPECIALIST_IDS.map(async (specialistId): Promise<SpecialistResult | null> => {
+      const promptPath = join(PROMPTS_DIR, `${specialistId}.md`);
+      const promptContent = await loadPrompt(promptPath);
+      const promptSha = computePromptSha(promptContent);
+
+      const startedAt = new Date().toISOString();
+      pushTraceEvent({
+        type: "specialist_start",
+        specialistId,
+        model: input.model,
+        promptSha,
+        inputTokens: 0,
+        startedAt,
+      });
+
       try {
-        return await runSpecialist({
+        const result = await runSpecialist({
           specialistId,
           systemPromptPath: join(PROMPTS_DIR, `${specialistId}.md`),
           ...input,
         });
+        pushTraceEvent({
+          type: "specialist_end",
+          specialistId,
+          model: input.model,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          latencyMs: result.latencyMs,
+          rawFindings: result.response.findings,
+          validationResult: "ok",
+          endedAt: new Date().toISOString(),
+        });
+        return result;
       } catch (error: unknown) {
         logSpecialistError(specialistId, error);
+        // Emit a failed specialist_end so the trace records the attempt.
+        const validationErrors =
+          error instanceof SpecialistValidationError
+            ? error.zodError.issues.map((i) => `${i.path.join(".")}: ${i.message}`)
+            : [error instanceof Error ? error.message : String(error)];
+        pushTraceEvent({
+          type: "specialist_end",
+          specialistId,
+          model: input.model,
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          rawFindings: [],
+          validationResult: "failed",
+          validationErrors,
+          endedAt: new Date().toISOString(),
+        });
         return null;
       }
     })

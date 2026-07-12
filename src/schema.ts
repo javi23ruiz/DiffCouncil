@@ -1,7 +1,14 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /** A single code review finding, as produced by the model. */
 export const FindingSchema = z.object({
+  /**
+   * Stable identifier computed as SHA-256 of specialistId + file + lineStart
+   * + first 100 chars of description. Set by {@link assignFindingId} after
+   * validation; the model never produces this field.
+   */
+  id: z.string().optional().describe("stable finding id, assigned post-parse"),
   file: z.string().describe("file path exactly as it appears in the diff"),
   lineStart: z
     .number()
@@ -52,3 +59,27 @@ export const ReviewResponseSchema = z.object({
 
 export type Finding = z.infer<typeof FindingSchema>;
 export type ReviewResponse = z.infer<typeof ReviewResponseSchema>;
+
+/**
+ * The description prefix length used when computing a stable finding id.
+ * The id encodes the first N characters so two similar-but-not-identical
+ * descriptions still produce distinct ids.
+ */
+const ID_DESC_PREFIX_LEN = 100;
+
+/**
+ * Assigns a stable, deterministic id to a Finding.
+ * The id is SHA-256 of `${specialistId}|${file}|${lineStart}|${descPrefix}`,
+ * truncated to the first 12 hex characters. This is compact enough to be
+ * human-readable in traces while still collision-resistant across a single
+ * run's ~dozen findings.
+ */
+export function assignFindingId(
+  specialistId: string,
+  finding: Finding
+): Finding {
+  const descPrefix = finding.description.slice(0, ID_DESC_PREFIX_LEN);
+  const raw = `${specialistId}|${finding.file}|${finding.lineStart}|${descPrefix}`;
+  const id = createHash("sha256").update(raw).digest("hex").slice(0, 12);
+  return { ...finding, id };
+}
