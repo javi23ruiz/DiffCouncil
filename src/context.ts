@@ -24,6 +24,10 @@ const GENERATED_PATTERNS: RegExp[] = [
   /\.pb\.(go|ts)$/,
   /\.g\.ts$/,
   /\.graphql-gen\.ts$/,
+  // Sentinel's own observability traces, committed under traces/ by the
+  // dogfooding workflow. They are machine-generated telemetry, so reviewing
+  // them wastes tokens and produces noise on Sentinel's own PRs.
+  /(^|\/)traces\/.+\.json$/,
 ];
 
 export interface DiffSummary {

@@ -37,13 +37,26 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Commit the run's trace back to the PR branch so it reaches main on merge
+      # and feeds the dashboard. Skipped for fork PRs, whose GITHUB_TOKEN cannot
+      # push to the head branch. Failures here are NOT swallowed: this is the
+      # observability pipeline, so a broken commit/push must fail the job loudly
+      # instead of silently leaving the dashboard empty (the bug that hid a
+      # never-committed trace before). A no-op (no traces, or no changes) exits 0.
       - name: Commit trace files
-        if: success()
+        if: success() && github.event.pull_request.head.repo.full_name == github.repository
         run: |
-          if [ -d traces ] && [ "$(ls -A traces 2>/dev/null)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add traces/
-            git commit -m "chore: add trace from sentinel run" || true
-            git push origin HEAD:"${{ github.head_ref }}" || true
+          set -euo pipefail
+          if [ -z "$(ls -A traces 2>/dev/null || true)" ]; then
+            echo "No trace files were produced; nothing to commit."
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add traces/
+          if git diff --cached --quiet; then
+            echo "Trace files unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: add trace from sentinel run"
+          git push origin HEAD:"${{ github.head_ref }}"

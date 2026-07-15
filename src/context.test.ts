@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateTokens, truncateDiff } from "./context.js";
+import { classifyFile, estimateTokens, truncateDiff } from "./context.js";
 
 /** Builds a realistic-looking single-file diff chunk of a given line count. */
 function makeFile(name: string, bodyLines: number): string {
@@ -16,6 +16,22 @@ function makeFile(name: string, bodyLines: number): string {
   ).join("\n");
   return `${header}\n${body}`;
 }
+
+describe("classifyFile", () => {
+  it("skips Sentinel's own trace JSON so it is never reviewed", () => {
+    expect(classifyFile("traces/abc-123.json")).toBe("generated");
+    expect(classifyFile("some/nested/traces/run.json")).toBe("generated");
+  });
+
+  it("does not skip ordinary source or a file merely named trace", () => {
+    expect(classifyFile("src/trace.ts")).toBeNull();
+    expect(classifyFile("src/traces.ts")).toBeNull();
+  });
+
+  it("still flags lockfiles", () => {
+    expect(classifyFile("package-lock.json")).toBe("lockfile");
+  });
+});
 
 describe("estimateTokens", () => {
   it("rounds up at ~4 characters per token", () => {

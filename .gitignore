@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.log
+.DS_Store
+
+# Trace fixture written by src/trace.test.ts into traces/. Real run traces are
+# UUID-named and MUST be committed for the dashboard, so ignore only this name.
+traces/roundtrip-test.json
