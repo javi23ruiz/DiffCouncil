@@ -4,7 +4,6 @@ import type { ZodError } from "zod";
 import { ReviewResponseSchema, type ReviewResponse } from "./schema.js";
 
 const MAX_TOKENS = 4096;
-const TEMPERATURE = 0;
 
 export interface ReviewUsage {
   inputTokens: number;
@@ -57,16 +56,30 @@ export async function callSubmitReview(
   const client = new Anthropic({ apiKey: req.apiKey });
 
   const start = Date.now();
+  // No `temperature` is set: it is rejected with a 400 on newer Claude models
+  // (Sonnet 5, Opus 4.7/4.8, Fable 5), and the model id is a user-supplied
+  // action input we do not pin, so any of those may be passed. It never
+  // guaranteed determinism anyway, so there is nothing to preserve.
   const response = await client.messages.create({
     model: req.model,
     max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
     system: req.systemPrompt,
     tools: [req.tool],
     tool_choice: { type: "tool", name: req.tool.name },
     messages: [{ role: "user", content: req.userMessage }],
   });
   const latencyMs = Date.now() - start;
+
+  // A forced tool call that hits the output cap is returned with a truncated,
+  // usually invalid, tool input. Detect it here and fail with an actionable
+  // message rather than letting it surface downstream as an opaque Zod error.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(
+      `The model hit the ${MAX_TOKENS}-token output cap (stop_reason: max_tokens) ` +
+        `before completing the ${req.tool.name} tool call; the review output was ` +
+        `too long. Raise MAX_TOKENS in review-call.ts or reduce the diff size.`
+    );
+  }
 
   const toolUse = response.content.find(
     (block): block is Anthropic.ToolUseBlock =>

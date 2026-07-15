@@ -84,9 +84,7 @@ function extractRunSummary(tf: TraceFile): RunSummary {
     keptFindings: synth?.keptFindings ?? [],
     droppedFindings: synth?.droppedFindings ?? [],
     duplicateGroups: synth?.duplicateGroups ?? [],
-    modelBreakdown: tf.summary.totalCostUsd
-      ? []
-      : [], // populated below
+    modelBreakdown: [], // populated by getAllRuns via extractBreakdown()
     events: tf.events,
   };
 }

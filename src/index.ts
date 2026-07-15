@@ -47,6 +47,7 @@ const PullRequestEventSchema = z.object({
 
 async function main(): Promise<void> {
   const start = Date.now();
+  const startedAtIso = new Date().toISOString();
   const runId = randomUUID();
   resetTrace();
 
@@ -78,20 +79,25 @@ async function main(): Promise<void> {
     const repo = event.repository.name;
     const prNumber = event.pull_request.number;
 
+    const octokit = new Octokit({ auth: githubToken });
+
+    const pr = await fetchPullRequest(octokit, owner, repo, prNumber);
+
+    // Emitted only after the fetch so headSha carries the real commit the
+    // review ran against; the dashboard's per-finding permalinks depend on it.
+    // `timestamp` uses startedAtIso (captured at function entry) so it still
+    // reflects run start, not the post-fetch moment.
     pushTraceEvent({
       type: "run_start",
       runId,
-      timestamp: new Date().toISOString(),
+      timestamp: startedAtIso,
       prNumber,
       repo: `${owner}/${repo}`,
-      headSha: "", // populated after fetch
+      headSha: pr.headSha,
       model,
       synthModel,
     });
 
-    const octokit = new Octokit({ auth: githubToken });
-
-    const pr = await fetchPullRequest(octokit, owner, repo, prNumber);
     log({
       stage: "fetch",
       prNumber,

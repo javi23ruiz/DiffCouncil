@@ -151,7 +151,7 @@ export async function runAllSpecialists(
       try {
         const result = await runSpecialist({
           specialistId,
-          systemPromptPath: join(PROMPTS_DIR, `${specialistId}.md`),
+          systemPrompt: promptContent,
           ...input,
         });
         pushTraceEvent({

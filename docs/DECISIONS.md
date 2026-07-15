@@ -192,3 +192,32 @@ Keep Sentinel diff-only through Phase 2, and defer cross-file context to later p
 
 - Phase 2 review quality is still bounded by what appears in the diff; findings that depend on cross-file effects remain out of reach until Phase 3.
 - The specialists and synthesizer are designed to consume structured findings, so adding a context-gathering step ahead of them later does not require reworking their contracts.
+
+## ADR-009: Git-committed JSON traces and a static GitHub Pages dashboard
+
+Status: Accepted
+
+### Context
+
+The parallel pipeline (ADR-006, ADR-007) makes each run a multi-step process: three specialists, a synthesizer, merge/drop bookkeeping, token and cost accounting.
+Understanding a run after the fact, and spotting trends across runs, needs an observability surface richer than the review comment itself.
+ADR-001 chose a GitHub Action over a hosted app specifically to avoid running an always-on service, which rules out a hosted database or backend for telemetry.
+
+### Decision
+
+Emit a versioned JSON trace (`traces/{runId}.json`, format version 2, defined in `src/trace.ts`) for every run, commit those traces into the repository, and render them with a static React/Vite dashboard deployed to GitHub Pages.
+The dashboard reads the trace files at build time (a Vite glob over `traces/*.json`) and validates each against a Zod schema (`dashboard/src/data/schema.ts`) that mirrors the producer types in `src/trace.ts`.
+
+### Rationale
+
+- No hosted component: committing traces to git and building a static site keeps Sentinel a pure Action plus a static site, consistent with ADR-001. There is no server to run, no database to operate.
+- Traces are the eval substrate: a durable, versioned record of what each run actually did is exactly what the Phase 3 eval harness needs, so producing it now is not throwaway instrumentation.
+- Deterministic bookkeeping in the trace: merge, drop, and cost figures are computed in code (see ADR-007) and recorded in the trace, so the dashboard reports facts rather than the model's self-report.
+- One schema, checked: generating the dashboard's view from a Zod schema that mirrors `src/trace.ts`, plus a schema checksum embedded in each trace, is intended to make producer/consumer drift visible rather than silent.
+
+### Consequences
+
+- Telemetry lives in git history: traces accumulate in the repository over time, coupling observability data to the source tree. This is acceptable at current volume but is a known scaling limit.
+- The pipeline reviews a repository that contains its own traces, so `src/context.ts` skips `traces/` during review to avoid Sentinel reviewing its own telemetry and burning tokens on it.
+- Two schema definitions must be kept in sync by hand (`src/trace.ts` and `dashboard/src/data/schema.ts`); the checksum and validation surface drift but do not prevent it. A test that fails on drift would be a stronger guard and is a candidate for a future change.
+- The trace-commit step in the dogfooding workflow pushes to the PR branch, so it only works for same-repo PRs and must fail loudly (not silently) when it cannot, or a broken pipeline can leave the dashboard empty without any signal.

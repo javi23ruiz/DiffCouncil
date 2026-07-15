@@ -45,8 +45,15 @@ These are not apologies. They are the motivations for the phases that follow.
 - **Heuristic filtering, not calibration.** The synthesizer applies hand-set confidence thresholds and merge rules rather than thresholds derived from measured precision and recall. Measured calibration is Phase 4.
 - **No verifier agents.** Nothing independently checks a finding before it is posted, so a plausible-but-wrong finding can still reach the comment. Verifier agents are Phase 5.
 
-## Phase 3: Routing and lightweight context - 🚧 Next
+## Phase 3: Evaluation harness, then routing and lightweight context - 🚧 Next
 
-- **Router.** A fast Haiku classification step decides which specialists run for a given diff, instead of always running all three.
+Sequencing note: the eval harness was originally Phase 4 (calibration).
+It is pulled forward to lead Phase 3 because the router's entire job is deciding which specialists to run, and that decision - like the three-specialist set itself (see ADR-006) - cannot be validated without measured precision and recall.
+Measurement comes before the architecture it is meant to justify.
+
+- **Eval harness (pulled forward from Phase 4).** Turn `evals/planted-bugs/` from a manual log into an automated suite: run Sentinel over the recorded planted-bug PRs and score catch rate, false positives, and per-category precision and recall. This is the baseline every later change is measured against.
+- **Router.** A fast Haiku classification step decides which specialists run for a given diff, instead of always running all three - evaluated against the harness so the routing decision is judged on data, not intuition.
 - **One-hop import context.** A deterministic AST walk pulls in the directly imported symbols a changed file depends on, giving reviewers limited cross-file context without full retrieval.
 - **Diff-unchanged short-circuit.** Skip re-review when a PR update does not change the reviewed diff, avoiding redundant runs and duplicate work.
+
+The committed run traces (see ADR-009) are the raw material for the harness: each is a labeled record of what a run did, so scoring becomes a matter of comparing traces against the planted-bug ground truth.

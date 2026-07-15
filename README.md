@@ -26,9 +26,11 @@ See [ROADMAP.md](./ROADMAP.md) for the phased plan and [docs/DECISIONS.md](./doc
 
 A workflow run triggers Sentinel on pull request open or update events.
 Sentinel fetches the PR's unified diff via the GitHub API.
-If the diff exceeds the 50k token budget, it is truncated and a truncation notice is appended so reviewers know the review is partial.
-The (possibly truncated) diff is sent to Claude in a single call using the prompt in `prompts/reviewer.md`, and the response is parsed into a review comment.
-Sentinel then posts that comment on the PR, or updates its existing comment in place on subsequent runs so reruns don't produce duplicates.
+Lockfiles, generated files, and Sentinel's own `traces/` output are skipped, and if the remaining diff exceeds the 50k token budget it is truncated with a notice appended so reviewers know the review is partial.
+The diff is then reviewed by three specialists - security, correctness, and maintainability - running concurrently, each forced to return schema-validated findings through a `submit_review` tool call.
+A synthesizer pass merges near-duplicate findings, ranks them, and drops low-confidence ones into a single unified review.
+Sentinel posts that review as a comment on the PR, or updates its existing comment in place on subsequent runs so reruns don't produce duplicates.
+Each run also writes an observability trace to `traces/{runId}.json`, which the dashboard renders.
 
 ## How it looks
 
@@ -46,20 +48,23 @@ See `docs/DECISIONS.md` for the architecture decision log.
 - `docs/SETUP.md` - how to add the `ANTHROPIC_API_KEY` repository secret so the dogfooding workflow can run.
 - `action.yml` - GitHub Action metadata: declares the `anthropic-api-key`, `github-token`, and `model` inputs and points to the built entry point.
 - `.github/workflows/sentinel-self.yml` - dogfooding workflow that builds Sentinel from source and runs it on pull requests against this repo itself.
-- `evals/planted-bugs/` - informal Phase 1 eval log: one entry per dogfood PR recording planted bugs, what Sentinel caught/missed, and false positives.
+- `evals/planted-bugs/` - eval log: one entry per dogfood PR recording planted bugs, what Sentinel caught/missed, and false positives. This is the seed dataset for the Phase 3 eval harness.
 - `package.json` - dependencies (`@anthropic-ai/sdk`, `@octokit/rest`, `zod`) and dev tooling (`typescript`, `vitest`, `tsup`).
 - `tsconfig.json` - strict TypeScript compiler configuration.
-- `prompts/reviewer.md` - the review prompt sent to Claude. Currently a stub; the real prompt is written by hand, not generated.
-- `src/index.ts` - Action entry point. Reads inputs and (once implemented) wires together `github.ts` and `reviewer.ts`.
+- `prompts/` - the specialist prompts (`security.md`, `correctness.md`, `maintainability.md`) and `synthesizer.md`, loaded at runtime. Written by hand, not generated.
+- `src/index.ts` - Action entry point. Wires the pipeline together and writes the run's observability trace.
 - `src/github.ts` - fetches a PR's diff and posts/updates the review comment. Comment updates must be idempotent: reruns on the same PR update the existing bot comment rather than creating duplicates.
-- `src/reviewer.ts` - calls Claude with the prompt loaded from `prompts/reviewer.md` and the PR diff.
-- `src/context.ts` - token estimation and diff truncation (50k token limit, with a truncation notice appended when truncation occurs).
+- `src/context.ts` - token estimation, file classification (lockfiles, generated files, and `traces/` output are skipped), and diff truncation (50k token limit, with a truncation notice when truncation occurs).
+- `src/orchestrator.ts` - runs the three specialists concurrently and collects their results.
+- `src/synthesizer.ts` - merges, ranks, and filters the specialists' findings into one review.
+- `src/trace.ts` - the v2 observability trace format the dashboard consumes.
+- `dashboard/` - the static GitHub Pages dashboard that renders the traces (see `dashboard/README.md`).
 
 ## Dashboard
 
 Sentinel has an observability dashboard deployed via GitHub Pages.
 
-**URL:** `<REPO_URL>/dashboard-url` *(placeholder — fill in after first deploy)*
+**URL:** https://javi23ruiz.github.io/sentinel/ *(GitHub project Pages for this repo; the build uses a relative asset base and hash routing so it serves correctly from that sub-path).*
 
 See [dashboard/README.md](./dashboard/README.md) for local development instructions.
 
