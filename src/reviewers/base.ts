@@ -1,6 +1,6 @@
 import type { ZodError } from "zod";
 
-import { computePromptSha, loadPrompt } from "../prompt-loader.js";
+import { computePromptSha } from "../prompt-loader.js";
 import { renderUntrusted } from "../prompt-safety.js";
 import {
   callSubmitReview,
@@ -33,7 +33,14 @@ export class SpecialistValidationError extends Error {
 
 export interface SpecialistInput {
   specialistId: SpecialistId;
-  systemPromptPath: string;
+  /**
+   * The specialist's system prompt content, already loaded from disk by the
+   * orchestrator. It is passed in (rather than a path re-read here) so the
+   * prompt is read and SHA-hashed exactly once per run: the orchestrator needs
+   * the SHA for the `specialist_start` trace event, and reusing the same bytes
+   * for the API call guarantees the traced SHA matches what was actually sent.
+   */
+  systemPrompt: string;
   diff: string;
   prTitle: string;
   prBody: string;
@@ -106,8 +113,9 @@ function mockResult(specialistId: SpecialistId): SpecialistResult {
 }
 
 /**
- * Runs a single specialist reviewer: loads its system prompt and makes the
- * forced `submit_review` call via the shared review-call helper.
+ * Runs a single specialist reviewer: makes the forced `submit_review` call via
+ * the shared review-call helper, using the system prompt the orchestrator
+ * already loaded (see {@link SpecialistInput.systemPrompt}).
  *
  * @returns The parsed structured response tagged with the specialist's id,
  * along with token usage and wall-clock latency.
@@ -121,15 +129,14 @@ export async function runSpecialist(
     return mockResult(input.specialistId);
   }
 
-  const systemPrompt = await loadPrompt(input.systemPromptPath);
-  const promptSha = computePromptSha(systemPrompt);
+  const promptSha = computePromptSha(input.systemPrompt);
   const userMessage = buildUserMessage(input);
 
   try {
     const outcome = await callSubmitReview({
       apiKey: input.apiKey,
       model: input.model,
-      systemPrompt,
+      systemPrompt: input.systemPrompt,
       userMessage,
       tool: SUBMIT_REVIEW_TOOL,
     });

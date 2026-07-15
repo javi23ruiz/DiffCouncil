@@ -254,7 +254,7 @@ describe("deriveSummary", () => {
       },
     ];
 
-    const summary = deriveSummary(events, "r1", "comments_to_address", 1);
+    const summary = deriveSummary(events, "comments_to_address", 1);
 
     expect(summary.totalCostUsd).toBe(0.025);
     expect(summary.totalMs).toBe(3000);

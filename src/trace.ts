@@ -194,7 +194,6 @@ export function resetTrace(): void {
  */
 export function deriveSummary(
   events: readonly TraceEvent[],
-  runId: string,
   verdict: TraceFileSummary["verdict"],
   findingCount: number
 ): TraceFileSummary {
@@ -259,7 +258,7 @@ export async function writeTraceFile(
   findingCount: number
 ): Promise<TraceFile> {
   const snap = events;
-  const summary = deriveSummary(snap, runId, verdict, findingCount);
+  const summary = deriveSummary(snap, verdict, findingCount);
 
   const file: TraceFile = {
     runId,

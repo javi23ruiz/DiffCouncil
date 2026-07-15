@@ -38,6 +38,7 @@ function specialist(
     },
     usage: { inputTokens: 0, outputTokens: 0 },
     latencyMs: 0,
+    promptSha: "testsha",
   };
 }
 

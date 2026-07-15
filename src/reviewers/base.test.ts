@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inject a fake Anthropic SDK so we can drive `messages.create` responses.
@@ -12,12 +10,10 @@ vi.mock("@anthropic-ai/sdk", () => ({
 
 import { runSpecialist, type SpecialistInput } from "./base.js";
 
-const SECURITY_PROMPT = join(process.cwd(), "prompts", "security.md");
-
 function input(overrides: Partial<SpecialistInput> = {}): SpecialistInput {
   return {
     specialistId: "correctness",
-    systemPromptPath: SECURITY_PROMPT,
+    systemPrompt: "You are a test reviewer.",
     diff: "diff --git a/a.ts b/a.ts",
     prTitle: "Title",
     prBody: "Body",
@@ -87,6 +83,15 @@ describe("runSpecialist", () => {
     });
 
     await expect(runSpecialist(input())).rejects.toThrow(/did not return a submit_review/);
+  });
+
+  it("throws an actionable error when the output is truncated at the token cap", async () => {
+    create.mockResolvedValue({
+      ...apiResponse(validToolInput),
+      stop_reason: "max_tokens",
+    });
+
+    await expect(runSpecialist(input())).rejects.toThrow(/stop_reason: max_tokens/);
   });
 
   it("short-circuits to a tagged mock when SENTINEL_MOCK is set", async () => {
