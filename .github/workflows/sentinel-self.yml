@@ -51,6 +51,13 @@ jobs:
             echo "No trace files were produced; nothing to commit."
             exit 0
           fi
+          # The build/review checkout is the PR merge ref in detached, shallow
+          # HEAD, which cannot be pushed back to the branch (the push is rejected
+          # as non-fast-forward). Switch to the real head branch tip first; the
+          # untracked traces/ files written during the run are carried across the
+          # checkout, then committed on top of the true tip and fast-forwarded.
+          git fetch --depth=1 origin "${{ github.head_ref }}"
+          git checkout -B "${{ github.head_ref }}" FETCH_HEAD
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add traces/
