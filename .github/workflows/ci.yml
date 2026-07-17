@@ -1,0 +1,31 @@
+name: CI
+
+# Typecheck and unit/drift tests for the action source. Without this gate the
+# drift tests (prompt/code sync, trace/dashboard schema sync) only run on
+# whichever machine remembers to run them, which is no gate at all.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
