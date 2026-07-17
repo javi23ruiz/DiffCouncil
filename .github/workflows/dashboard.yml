@@ -7,10 +7,22 @@ on:
     paths:
       - "traces/**"
       - "dashboard/**"
+      - "scripts/check-dashboard-bundle.sh"
+      - ".github/workflows/dashboard.yml"
+  # Build (but never deploy) on PRs that touch the dashboard or its data, so a
+  # broken or structurally empty build is caught before it reaches main. This
+  # trigger was missing originally, which left the build-check job dead code.
+  pull_request:
+    paths:
+      - "traces/**"
+      - "dashboard/**"
+      - "scripts/check-dashboard-bundle.sh"
       - ".github/workflows/dashboard.yml"
 
+# Deploys to main serialize with each other; PR build checks get their own
+# per-ref group so they never queue behind a deploy.
 concurrency:
-  group: dashboard-deploy
+  group: dashboard-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -30,6 +42,8 @@ jobs:
           node-version: "22"
       - run: cd dashboard && npm ci
       - run: cd dashboard && npm run build
+      - name: Smoke-check the bundle embeds every committed trace
+        run: ./scripts/check-dashboard-bundle.sh
 
   deploy:
     name: Deploy to GitHub Pages
@@ -47,6 +61,10 @@ jobs:
         run: cd dashboard && npm ci
       - name: Build dashboard
         run: cd dashboard && npm run build
+      # Verify at the artifact users will actually see: a build that succeeds
+      # while embedding no trace data must fail here, not deploy empty.
+      - name: Smoke-check the bundle embeds every committed trace
+        run: ./scripts/check-dashboard-bundle.sh
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
