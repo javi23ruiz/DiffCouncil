@@ -57,3 +57,12 @@ Measurement comes before the architecture it is meant to justify.
 - **Diff-unchanged short-circuit.** Skip re-review when a PR update does not change the reviewed diff, avoiding redundant runs and duplicate work.
 
 The committed run traces (see ADR-009) are the raw material for the harness: each is a labeled record of what a run did, so scoring becomes a matter of comparing traces against the planted-bug ground truth.
+
+## Candidate directions beyond Phase 3 (recorded 2026-07-16, not yet scoped)
+
+These are ideas under consideration for how Sentinel gets real cross-file understanding, recorded here so they are not lost.
+None of them is committed scope: each must be judged against the eval harness once it exists, not adopted on intuition (the same rule ADR-006 applies to the specialist set).
+
+- **Repo indexing into a code graph.** Index the repository into a graph of symbols, imports, and call sites ahead of review, and let the pipeline query it for the context a finding needs. Strong retrieval, but it adds an indexing step with caching and staleness concerns inside a stateless Action run.
+- **Agentic context retrieval via tools.** Instead of a pre-built index, give the reviewer model tools (resolve an import, read a file region, find call sites of a symbol) and let it pull context on demand from the checkout already present on the runner. This subsumes the planned deterministic one-hop import walk and fits ADR-002's raw-SDK, tool-use-as-primitive approach, at the cost of a multi-turn agent loop with less predictable latency and spend.
+- **Rethinking the fixed specialist set.** The three-parallel-specialists design may not survive contact with eval data; a single stronger agentic reviewer with tools, or a router picking from a wider specialist pool, are both on the table once catch rate and precision can be measured per configuration.

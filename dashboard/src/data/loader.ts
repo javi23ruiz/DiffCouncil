@@ -2,11 +2,15 @@ import type { RunSummary, TraceEvent, TraceFile } from "./types";
 import { TraceFileSchema } from "./schema";
 
 // ---------------------------------------------------------------------------
-// Build-time glob: import all trace JSON files from ../traces/
+// Build-time glob: import every trace JSON file the Action writes to the
+// repo-root traces/ directory. The path is relative to this file
+// (dashboard/src/data/loader.ts), so reaching the repo root needs three levels
+// up; "../../traces" resolves to dashboard/traces/ (which never exists) and
+// silently loads nothing - the bug that kept this dashboard empty.
 // ---------------------------------------------------------------------------
 
 const traceModules = import.meta.glob(
-  "../../traces/*.json",
+  "../../../traces/*.json",
   { eager: true }
 ) as Record<string, { default: unknown }>;
 

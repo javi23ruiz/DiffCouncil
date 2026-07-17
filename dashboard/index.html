@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sentinel Observability</title>
-    <link rel="icon" href="/sentinel/assets/logo.svg" type="image/svg+xml" />
+    <!-- Relative href + a copy of the logo in public/ so the icon survives a
+         repo rename, matching the relative-base rationale in vite.config.ts.
+         The old absolute /sentinel/assets/logo.svg pointed at a file that never
+         entered the build and 404ed on the deployed site. -->
+    <link rel="icon" href="./logo.svg" type="image/svg+xml" />
   </head>
   <body class="bg-zinc-950 text-zinc-100 antialiased">
     <div id="root"></div>

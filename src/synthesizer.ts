@@ -17,6 +17,20 @@ import type { DroppedFinding, DuplicateGroup } from "./trace.js";
 export const DROP_THRESHOLD = 0.5;
 export const SECURITY_DROP_THRESHOLD = 0.4;
 
+// Line distance within which the model is told to merge duplicate findings.
+// MUST stay in sync with the "within N lines" rule in prompts/synthesizer.md;
+// synthesizer.threshold.test.ts guards against drift between the two.
+export const MERGE_LINE_DISTANCE = 3;
+
+// Line tolerance used when attributing kept findings back to raw ones for the
+// deterministic merge/drop bookkeeping. Deliberately wider than
+// MERGE_LINE_DISTANCE: a merged finding may carry the line range of either
+// member (the prompt says to keep the higher-severity one), so attribution
+// needs slack beyond the merge distance or real merges would be miscounted as
+// drops. The invariant MATCH_LINE_TOLERANCE >= MERGE_LINE_DISTANCE is what
+// makes that sound, and is asserted in synthesizer.threshold.test.ts.
+export const MATCH_LINE_TOLERANCE = 10;
+
 const SYSTEM_PROMPT_PATH = join(PROMPTS_DIR, "synthesizer.md");
 
 /**
@@ -65,12 +79,14 @@ function isBelowThreshold(finding: Finding): boolean {
 
 /**
  * Determines whether a raw finding and a kept finding overlap enough to be
- * considered the same issue. Matches when: same file AND within 10 lines.
+ * considered the same issue. Matches when: same file AND within
+ * MATCH_LINE_TOLERANCE lines (see the constant for why this is wider than the
+ * merge distance the model is given).
  */
 function findingsOverlap(raw: Finding, kept: Finding): boolean {
   if (raw.file !== kept.file) return false;
   const dist = Math.abs(raw.lineStart - kept.lineStart);
-  return dist <= 10;
+  return dist <= MATCH_LINE_TOLERANCE;
 }
 
 /**
