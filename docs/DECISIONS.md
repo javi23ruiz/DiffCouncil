@@ -221,3 +221,34 @@ The dashboard reads the trace files at build time (a Vite glob over `traces/*.js
 - The pipeline reviews a repository that contains its own traces, so `src/context.ts` skips `traces/` during review to avoid Sentinel reviewing its own telemetry and burning tokens on it.
 - Two schema definitions must be kept in sync by hand (`src/trace.ts` and `dashboard/src/data/schema.ts`); the checksum and validation surface drift but do not prevent it. A test that fails on drift would be a stronger guard and is a candidate for a future change.
 - The trace-commit step in the dogfooding workflow pushes to the PR branch, so it only works for same-repo PRs and must fail loudly (not silently) when it cannot, or a broken pipeline can leave the dashboard empty without any signal.
+
+## ADR-010: Verify the served artifact - bundle smoke check and schema-drift test
+
+Status: Accepted
+
+### Context
+
+The trace-to-dashboard pipeline failed silently three times: traces never committed, a swallowed push rejection, and a loader glob that matched a nonexistent directory so the dashboard built and deployed structurally empty.
+Every failure produced green checkmarks, because each individual step succeeded; the defects lived in the seams between steps.
+ADR-009 also left a known gap: the dashboard's Zod schema mirrors `src/trace.ts` by hand, drift between them is only surfaced as a runtime `console.warn` in the browser, and the ADR itself named a fail-on-drift test as a candidate future change.
+Separately, no CI workflow ran the unit test suite at all, so even existing drift guards (the synthesizer threshold test) only ran on whichever machine remembered to run them.
+
+### Decision
+
+Three guards, documented in `docs/TESTING.md`:
+
+- A build smoke check (`scripts/check-dashboard-bundle.sh`) that fails the dashboard workflow when any committed trace's runId is missing from the built JS bundle, run on dashboard/trace PRs and before every Pages deploy.
+- A schema-drift test (`src/trace.dashboard-sync.test.ts`) validating a synthetic trace built from the producer types, plus every committed trace, against the dashboard's Zod schema.
+- A CI workflow (`.github/workflows/ci.yml`) running typecheck and the test suite on every PR and push to main, so the drift guards are an actual gate.
+
+### Rationale
+
+- Verification must happen at the artifact users consume (the built bundle), not the step before it; a green build proves compilation, not content.
+- Silence is the default failure mode of multi-hop pipelines; loudness at each hop has to be engineered deliberately, and a warning is not loudness - only a failed check is.
+- A test that fails on drift beats a comment asking humans to keep two files in sync (the repo's own convention in `CLAUDE.md`).
+
+### Consequences
+
+- The smoke check greps for runIds in the bundle, which couples it to the "traces are inlined at build time" design; if the dashboard ever lazy-loads traces as separate assets, the check must follow the data.
+- The drift test imports the dashboard's schema into the root project, so the root `tsconfig.json` no longer sets `rootDir` (it was emit-only configuration that `tsup` ignores anyway) and root typecheck now covers `dashboard/src/data/schema.ts`.
+- The dashboard build-check job now actually runs on PRs (the original `pull_request` gate existed without a matching trigger, so the job was dead code).
